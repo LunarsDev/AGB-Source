@@ -4,7 +4,7 @@
 <p align="center">
 	AGB is a Discord verified general purpose bot built with <a href="https://github.com/Rapptz/discord.py">discord.py</a><br>
 	<a href="https://dsc.gg/agb">
-      <img src="https://img.shields.io/badge/Invite:-Bot Invite%20%E2%86%92-gray.svg?colorA=655BE1&colorB=4F44D6&style=for-the-badge"/>
+      <img src="https://img.shields.io/badge/Invite:-Bot Invite%20%E2%86%92-gray.svg?colorA=655BE1&colorB=4F44D6&style=for-the-badge"/> 
     </a>
 	<a href="https://dsc.gg/agb">
     	<img src="https://img.shields.io/badge/Version:-4.0.6%20%E2%86%92-gray.svg?colorA=655BE1&colorB=4F44D6&style=for-the-badge"/>
