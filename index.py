@@ -1,11 +1,17 @@
 import asyncio
 import logging
 import os
+import time
 import random
 from datetime import datetime
+from typing import Any, Optional, Union
 
 import discord
 import sentry_sdk
+from sentry_sdk.integrations.logging import LoggingIntegration
+from sentry_sdk.integrations.aiohttp import AioHttpIntegration
+from sentry_sdk.integrations.threading import ThreadingIntegration
+from sentry_sdk.integrations.modules import ModulesIntegration
 from colorama import Fore, Style, init
 from discord import Interaction, app_commands
 from discord.ext import commands
@@ -15,6 +21,11 @@ from Manager.logger import formatColor
 from datetime import timezone
 from utils import imports, permissions
 from utils.errors import DatabaseError, DisabledCommand
+
+
+# Set timezone
+os.environ["TZ"] = "America/New_York"
+time.tzset()
 
 try:
     import uvloop  # type: ignore
@@ -29,8 +40,8 @@ discord.http._set_api_version(9)  # type: ignore
 logger = logging.getLogger(__name__)
 logging.basicConfig(
     level=logging.INFO,
-    format=f"{f'{Style.DIM}(%(asctime)s){Style.RESET_ALL}'} [{Fore.CYAN}%(levelname)s{Style.RESET_ALL}]: %(message)s",
-    datefmt="[%a]-%I:%M-%p",
+    format=f"{f'{Fore.MAGENTA}%(asctime)s{Style.RESET_ALL}'} | {Fore.LIGHTYELLOW_EX}%(funcName)s(){Style.RESET_ALL} | {Fore.MAGENTA}%(levelname)s{Style.RESET_ALL} {Fore.WHITE}>>>{Style.RESET_ALL} {Style.DIM}%(message)s{Style.RESET_ALL}",
+    datefmt="%m-%e %T %p",
 )
 
 
@@ -39,13 +50,13 @@ emojis = imports.get("emojis.json")
 db_config = imports.get("db_config.json")
 
 EMBED_COLOUR = 0x2F3136
-
 embed_space = "\u200b "
-suggestion_yes = "<:checked:825049250110767114>"
-suggestion_no = "<:zzz_playroomx:825049236802240563>"
+yes = "<:checked:825049250110767114>"
+no = "<:zzz_playroomx:825049236802240563>"
 delay = 10
 Error = 0xE20000
 TOP_GG_TOKEN = config.topgg
+DEV = config.dev
 Website = "https://lunardev.group"
 Server = "https://discord.gg/cNRNeaX"
 Vote = "https://top.gg/bot/723726581864071178/vote"
@@ -104,12 +115,7 @@ slash_errors = (
 # async def create_slash_embed(self, interaction, error):
 #     await interaction.response.defer(ephemeral=True, thinking=True)
 #     embed = discord.Embed(title="Error", colour=0xFF0000)
-#     embed.add_field(name="Author", value=interaction.user.mention)
-#     embed.add_field(name="Error", value=error)
-#     embed.set_author(name=interaction.user, icon_url=interaction.user.avatar)
-#     await interaction.followup.send(embed=embed, ephemeral=True)
-
-
+#     embed.add_field(name="Author", value=interaction.user.mention)True
 async def update_command_usages(interaction: Interaction) -> bool:
     bot: Bot = interaction.client  # type: ignore # shut
 
@@ -125,14 +131,16 @@ async def update_command_usages(interaction: Interaction) -> bool:
 
 class AGBTree(app_commands.CommandTree):
     async def call(self, interaction):
+        from utils.default import log
+
         await super().call(interaction)
         if interaction.user.id in config.owners:
-            logger.info(
+            log(
                 f"{formatColor('[DEV]', 'bold_red')} {formatColor(interaction.user, 'red')} used command {formatColor(interaction.command.name, 'grey')}"
             )
             return
         else:
-            logger.info(
+            log(
                 f"{formatColor(interaction.user.id, 'grey')} used command {formatColor(interaction.command.name, 'grey')} in {formatColor(interaction.guild.id, 'grey')}"
             )
 
@@ -150,8 +158,8 @@ class AGBTree(app_commands.CommandTree):
 
 
 # Don't touch this.
-"""
-sentry_logging = LoggingIntegration(level=logging.INFO, event_level=logging.ERROR)
+sentry_logging = LoggingIntegration(
+    level=logging.INFO, event_level=logging.ERROR)
 sentry_sdk.init(
     config.sentryDSN,
     integrations=[
@@ -162,15 +170,13 @@ sentry_sdk.init(
     ],
     traces_sample_rate=1.0,
 )
-"""
 
 
 class Bot(commands.AutoShardedBot):
     def __init__(self, intents: discord.Intents, *args, **kwargs) -> None:
-        # Getting kwargs -> .get('kwarg_name', 'default_value')
         self.default_prefix = kwargs.get("default_prefix", config.prefix)
-        self.embed_color = kwargs.get("embed_color", 0x3454DB)
-
+        default_status = "AGB Beta <3" if DEV else "Hi <3"
+        self.embed_color = kwargs.get("embed_color", 3429595)
         super().__init__(
             command_prefix=self.default_prefix,
             strip_after_prefix=True,
@@ -179,9 +185,8 @@ class Bot(commands.AutoShardedBot):
             help_command=None,
             reconnect=True,
             command_attrs=dict(hidden=True),
-            status=discord.Status.idle,
-            activity=discord.Game(name="Initializing..."),
-            shard_count=1,
+            status=discord.Status.dnd,
+            activity=discord.Game(name=default_status),
             chunk_guilds_at_startup=False,
             intents=intents,
             tree_cls=AGBTree,
@@ -189,28 +194,36 @@ class Bot(commands.AutoShardedBot):
                 roles=False, users=True, everyone=False, replied_user=False
             ),
         )
+
         self.launch_time = datetime.now(timezone.utc)
         self.message_cooldown = commands.CooldownMapping.from_cooldown(
             1.0, random.randint(1, 5), commands.BucketType.guild
         )
+
         self.db: Database = Database(self, db_config)
         self.add_check(self.global_commands_check)
+        self.traceback = None
 
     async def setup_hook(self):
         await self.db.initate_database(chunk=True)
+        from utils.default import log
         from Cogs.admin import PersistentView
 
         self.add_view(PersistentView(self))
         # self.add_view(AutopostingReport(self))
-
-        BROKE_AF = ()
-        DISABLED_FOR_DEV = ("autoposting",)
+        try:
+            await self.load_extension("jishaku")
+            log("Loaded JSK.")
+        except Exception as e:
+            log(f"Failed to load JSK: {e}")
+        DISABLED_FOR_DEV = ()
         for file in os.listdir("Cogs"):
             if file.endswith(".py"):
                 name = file[:-3]
-                if name in BROKE_AF:
+                if DEV and name in DISABLED_FOR_DEV:
                     continue
                 await self.load_extension(f"Cogs.{name}")
+                log(f"Loaded Cog: {formatColor(name, 'green')}")
 
     async def close(self):
         await self.close_func()
@@ -232,7 +245,8 @@ class Bot(commands.AutoShardedBot):
         #     ) # Thanks Soheab, but im fixing things?
 
         if msg.content.lower().startswith("tp!"):
-            msg.content = msg.content[: len("tp!")].lower() + msg.content[len("tp!") :]
+            msg.content = msg.content[: len(
+                "tp!")].lower() + msg.content[len("tp!"):]
         if bot.user in msg.mentions:
             current_guild_info = self.db.get_guild(
                 msg.guild.id
@@ -359,5 +373,91 @@ class colors:
     greyple = 0x99AAB5
 
 
+TwoValues = Union[
+    Optional[str],  # name/text = str or None
+    tuple[Optional[str]],  # name/text = (str or None, )
+    tuple[
+        Optional[str], Optional[str]
+    ],  # (str or None (name/text), str or None (icon_url))
+]
+
+
+class EmbedMaker(discord.Embed):
+    def __init__(
+        self,
+        *,
+        color: Optional[Union[int, discord.Colour]] = None,
+        title: Optional[Any] = None,
+        url: Optional[Any] = None,
+        description: Optional[Any] = None,
+        timestamp: Optional[datetime] = None,
+        author: Optional[TwoValues] = None,
+        footer: Optional[TwoValues] = None,
+        thumbnail: Optional[str] = None,
+        image: Optional[str] = None,
+    ) -> None:
+        if url is None:
+            url = Website
+        if color is None:
+            color = colors.prim
+
+        super().__init__(
+            title=title,
+            url=url,
+            description=description,
+            timestamp=timestamp,
+            color=color,
+        )
+
+        if thumbnail is not None:
+            self.set_thumbnail(url=thumbnail)
+        if image is not None:
+            self.set_image(url=image)
+
+        self._maybe_footer(footer)
+        self._maybe_author(author)
+
+    async def __call__(
+        self,
+        destination: discord.abc.Messageable,
+        content: Optional[str] = None,
+        **kwargs,
+    ) -> discord.Message:
+        return await self.send(destination, content, **kwargs)
+
+    async def send(
+        self,
+        destination: discord.abc.Messageable,
+        content: Optional[str] = None,
+        **kwargs,
+    ) -> discord.Message:
+        return await destination.send(content=content, embed=self, **kwargs)
+
+    @staticmethod
+    def __parse_values(value: TwoValues) -> tuple[Optional[str], Optional[str]]:
+        if isinstance(value, str):
+            return value, None
+        elif isinstance(value, tuple):
+            if len(value) == 1:
+                return value[0], None
+            elif len(value) == 2:
+                return value[0], value[1]
+            return None, None
+        else:
+            return None, None
+
+    def _maybe_footer(self, value: TwoValues) -> None:
+        text, icon_url = self.__parse_values(value)
+        self.set_footer(text=text, icon_url=icon_url)
+
+    def _maybe_author(self, value: TwoValues) -> None:
+        name, icon_url = self.__parse_values(value)
+        if name:
+            self.set_author(name=name, icon_url=icon_url)
+
+
 if __name__ == "__main__":
-    bot.run(config.token, log_handler=None)
+    if DEV is True:
+        bot.run(config.devtoken, log_handler=None)
+    else:
+        bot.run(config.token, log_handler=None)
