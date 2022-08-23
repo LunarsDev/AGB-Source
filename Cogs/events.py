@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import datetime
+import os
 import random
-from datetime import datetime
 from typing import TYPE_CHECKING
 
+from Manager.emoji import Emoji
 import aiohttp
-import cronitor
+
+# import cronitor
 import discord
 from discord.ext import commands, tasks
-from index import logger
+from index import DEV, colors
 from Manager.logger import formatColor
 from sentry_sdk import capture_exception
 from utils import imports
@@ -25,20 +28,12 @@ class events(commands.Cog):
         self.bot: Bot = bot
         self.config = imports.get("config.json")
         self.db_config = imports.get("db_config.json")
-        self.presence_loop.start()
-        self.update_stats.start()
-        self.post_status.start()
-        self.status_page.start()
         self.message_cooldown = commands.CooldownMapping.from_cooldown(
             1.0, 3.0, commands.BucketType.guild
         )
         self.loop = asyncio.get_event_loop()
-
-        cronitor.api_key = f"{self.config.cronitor}"
-
-    async def cog_unload(self):
-        self.presence_loop.stop()
-        self.update_stats.stop()
+        self.last_guild_count = 0
+        self.last_user_count = 0
 
     async def try_to_send_msg_in_a_channel(self, guild, msg):
         for channel in guild.channels:
@@ -49,6 +44,7 @@ class events(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):
         discord_version = discord.__version__
+        os.system("git pull")
         log(f"Logged in as: {formatColor(str(self.bot.user), 'bold_red')}")
         log(f"Client ID: {formatColor(str(self.bot.user.id), 'bold_red')}")
         log(
@@ -64,77 +60,83 @@ class events(commands.Cog):
                 f"{formatColor(str(self.bot.user), 'bold_red')} is using {formatColor(str(len(self.bot.shards)), 'green')} shard."
             )
         log(f"Discord Python Version: {formatColor(f'{discord_version}', 'green')}")
-        try:
-            await self.bot.load_extension("jishaku")
-            log("Loaded JSK.")
-        except Exception as e:
-            capture_exception(e)
-        for guild in self.bot.guilds:
-            guild_commands = await self.bot.db.execute(
-                "SELECT * FROM commands WHERE guild = $1", str(guild.id)
-            )
-            if not guild_commands:
-                await self.bot.db.execute(
-                    "INSERT INTO commands (guild) VALUES ($1)", str(guild.id)
+
+    # Check for expired Blacklists
+    # @tasks.loop(count=None, minutes=1)
+    # @tasks.loop(count=None, minutes=15)
+    @tasks.loop(count=None, time=[datetime.time(hour=h, minute=0) for h in range(24)])
+    async def blacklist_sweep(self):
+        changes = 0
+        checked = 0
+        total_users = 0
+        channel = await self.bot.fetch_channel(1004423443833442335)
+        start_embed = discord.Embed(
+            title=f"{Emoji.loading} Blackist checks started",
+            color=colors.prim,
+        )
+        await channel.send(embed=start_embed)
+
+        # blacklisted_users = await self.bot.db.fetch_blacklists()
+        rows = await self.bot.db.fetch(
+            "SELECT * FROM blacklist WHERE blacklisted = 'true'"
+        )
+        total_users = len(rows)
+        data = [dict(row) for row in rows]
+        for user in data:
+            checked += 1
+            db_user = await self.bot.db.fetch_blacklist(user["userid"])
+
+            if not user:
+                continue
+
+            if not db_user:
+                continue
+
+            if not db_user.blacklistedtill:
+                continue
+
+            if not db_user.blacklisted:
+                continue
+
+            now = datetime.datetime.now()
+            try:
+                blacklist_date = datetime.datetime.strptime(
+                    str(db_user.blacklistedtill), "%Y-%m-%d %H:%M:%S.%f"
                 )
-                log(f"New guild detected: {guild.id} | Added to commands database!")
+            except Exception:
+                blacklist_date = datetime.datetime.strptime(
+                    str(db_user.blacklistedtill), "%Y-%m-%d %H:%M:%S.%f+00"
+                )
+            if blacklist_date < now:
+                await self.bot.db.execute(
+                    f"UPDATE blacklist SET blacklisted = 'false', blacklistedtill = NULL WHERE userid = '{db_user.user_id}'"
+                )
+                changes += 1
+                clear_embed = discord.Embed(
+                    title=f"{Emoji.pencil} Blacklist cleared",
+                    description=f"*Cleared blacklist on user: `{db_user.user_id}`*",
+                    color=colors.green,
+                )
 
-            db_guild = self.bot.db.get_guild(guild.id) or await self.bot.db.fetch_guild(
-                guild.id
-            )
-            if not db_guild:
-                await self.bot.db.add_guild(guild.id)
+                # await channel.send(embed=clear_embed) # Don't send this. It'll cause problems
 
-                log(f"New guild detected: {guild.id} | Added to guilds database!")
+        await asyncio.sleep(3)
+        comp_embed = discord.Embed(
+            title=f"{Emoji.yes} Blacklist checks completed",
+            description=f"*Checked: `{checked}/{total_users}`*\n*Cleared: `{changes}`*",
+            color=colors.green,
+        )
 
-    @tasks.loop(count=None, seconds=random.randint(25, 60))
+        comp_embed.set_footer(text=f"Scanned {total_users} total entries!")
+        await channel.send(embed=comp_embed)
+
+    @tasks.loop(count=None, time=[datetime.time(hour=h, minute=0) for h in range(24)])
     async def presence_loop(self):
-        await self.bot.wait_until_ready()
-        if datetime.now().month == 10 and datetime.now().day == 3:
+        if datetime.datetime.now().month == 10 and datetime.datetime.now().day == 3:
             await self.bot.change_presence(
                 activity=discord.Game(name="Happy birthday Motz!")
             )
             return
-        # statuses = [
-        #     f"tp!help | {len(self.bot.guilds)} Servers",
-        #     f"tp!help | {len(self.bot.commands)} commands!",
-        #     "tp!help | tp!support",
-        #     "You can toggle commands now! | tp!toggle command",
-        #     "ElysianVRC is cool: https://discord.gg/yCfKu7D3GD",
-        #     "*badoop* hey look, i joined your vc",
-        #     "*gets the rare discord ringtone*, im better than all of you",
-        #     "today's weather is looking pretty weather-like",
-        #     "ikea is cool",
-        #     "i upgraded from windows 10 to doors",
-        #     "gamers take showers? i don't think so!",
-        #     "lets watch anime together, that would be cute",
-        #     "tp!help | your mom lol.",
-        #     "who invented grass, it's tasty",
-        #     "i mistook salt for sugar, and put it in my coffee",
-        #     "The dog goes meow, the motz goes THERES AN ERROR",
-        #     "this status is so poggers",
-        #     "ITS SENTIENT",
-        #     "i drink rainwater from the walmart parking lot",
-        #     "im a good bot, give me attention (please?)",
-        #     "meow, im a bot? i think not! meow",
-        #     "lets hold hands before marriage",
-        #     "vote for me on top.gg, i love the attention",
-        #     "im feeling a bit like a plastic bag",
-        #     "if ur too tall, just be shorter",
-        #     "don't be broke, just have money :)",
-        #     "go, commit a sin",
-        #     "go, commit a crime",
-        #     "im committing crimes rn (and code)",
-        #     "stupid idiot. (get roasted)",
-        #     "i am a bot, and i am a bot",
-        #     "I miss you cookie.",
-        #     "Yo mamma (Laugh at this)",
-        #     "We're really trying to be funny",
-        #     "im gonna eat plastic :>",
-        #     "Dm me the word tomato",
-        #     "ok, kitten",
-        # ] ### No longer using this list :)
-        # Goodbye Cookie 2012 - 06/24/2021
 
         statues = self.bot.db._statuses or await self.bot.db.fetch_statuses()
         status_id = random.randint(0, len(statues) - 1)
@@ -151,9 +153,27 @@ class events(commands.Cog):
         db_status = status_from_id.status
         server_count = db_status.replace("{server_count}", str(len(self.bot.guilds)))
         status = server_count.replace("{command_count}", str(len(self.bot.commands)))
-        await self.bot.change_presence(
-            activity=discord.Activity(type=discord.ActivityType.playing, name=status)
-        )
+
+        if DEV:
+            await self.bot.change_presence(
+                activity=discord.Activity(
+                    type=discord.ActivityType.playing, name="AGB Beta <3"
+                )
+            )
+        else:
+            await self.bot.change_presence(
+                activity=discord.Activity(
+                    type=discord.ActivityType.playing, name=status
+                )
+            )
+
+    @presence_loop.before_loop
+    async def delay_task_until_bot_ready(self):
+        await asyncio.sleep(5)
+
+    @blacklist_sweep.before_loop
+    async def delay_task_until_bot_ready(self):
+        await asyncio.sleep(5)
 
     @commands.Cog.listener(name="on_message")
     async def add(self, message):
@@ -175,31 +195,43 @@ class events(commands.Cog):
     # make an event to update channels with the bots server count
     @tasks.loop(count=None, minutes=15)
     async def update_stats(self):
+        if not DEV:
+            update_guild_count = self.bot.get_channel(968617760756203531)
+            update_user_count = self.bot.get_channel(968617853886550056)
+            if len(self.bot.guilds) != self.last_guild_count:
+                await update_guild_count.edit(
+                    name=f"Server Count: {len(self.bot.guilds)}"
+                )
+                self.last_guild_count = len(self.bot.guilds)
+            if len(self.bot.users) != self.last_user_count:
+                await update_user_count.edit(
+                    name=f"Cached Users: {len(self.bot.users)}"
+                )
+                self.last_user_count = len(self.bot.users)
+
+    @update_stats.before_loop
+    async def delay_task_until_bot_ready(self):
         await self.bot.wait_until_ready()
-        update_guild_count = self.bot.get_channel(968617760756203531)
-        update_user_count = self.bot.get_channel(968617853886550056)
-        await update_guild_count.edit(name=f"Server Count: {len(self.bot.guilds)}")
-        await update_user_count.edit(name=f"User Count: {len(self.bot.users)}")
+        await asyncio.sleep(5)
 
-    @tasks.loop(count=None, minutes=10)
-    async def post_status(self):
-        monitor = cronitor.Monitor("4VwGKr")
-        monitor.ping()  # send a heartbeat event
-
-    @tasks.loop(count=None, minutes=2)
+    @tasks.loop(count=None, seconds=30)
     async def status_page(self):
-        await self.bot.wait_until_ready()
-
         # Post AGB status to status page
-        async with aiohttp.ClientSession() as s:
-            async with s.get(
-                "https://betteruptime.com/api/v1/heartbeat/pP3xBgddftBNS5T8JeGHtiaN"
-            ) as r:
-                await r.json()
+        if not DEV:
+            async with aiohttp.ClientSession() as s:
+                async with s.get(
+                    f"https://status.lunardev.group/api/push/8Km8kzfUfH?status=up&msg=OK&ping={round(self.bot.latency * 1000)}"
+                ) as r:
+                    await r.json()
+
+    @status_page.before_loop
+    async def delay_task_until_bot_ready(self):
+        await self.bot.wait_until_ready()
+        await asyncio.sleep(5)
 
     # @commands.Cog.listener(name="on_message")
     # async def add_server_to_db(self, ctx):
-    #     await self.bot.wait_until_ready()
+    #
     #     # Add server to database
     #     try:
     #         cursor_n.execute(
@@ -222,20 +254,21 @@ class events(commands.Cog):
     # XOXOXO, KISSES ~ WinterFe
     @commands.Cog.listener(name="on_command")
     async def command_usage_updater(self, ctx):
-        await self.bot.wait_until_ready()
-        bot: Bot = ctx.bot  # type: ignore # shut
+        if not DEV:
+            bot: Bot = ctx.bot
+            db_user = bot.db.get_user(ctx.author.id) or await bot.db.fetch_user(
+                ctx.author.id
+            )
 
-        db_user = bot.db.get_user(ctx.author.id) or await bot.db.fetch_user(
-            ctx.author.id
-        )
-        if not db_user:
-            return
-
-        await db_user.modify(usedcmds=db_user.usedcmds + 1)
+            if not db_user:
+                return
+            if not db_user.message_tracking:
+                return
+            await db_user.modify(usedcmds=db_user.usedcmds + 1)
 
     # @commands.Cog.listener(name="on_command")
     # async def owner_check(self, ctx):
-    #     await self.bot.wait_until_ready()
+    #
 
     #     if ctx.author.id in self.config.owners:
     #         await
@@ -244,7 +277,7 @@ class events(commands.Cog):
 
     @commands.Cog.listener(name="on_message")
     async def user_check(self, ctx):
-        await self.bot.wait_until_ready()
+
         # cursor_n.execute(f"SELECT blacklisted FROM blacklist WHERE userID = {ctx.author.id}")
         # res = cursor_n.fetch()
         # for x in res():
@@ -289,7 +322,7 @@ class events(commands.Cog):
 
     @commands.Cog.listener(name="on_invite_create")
     async def log_invites(self, invite):
-        await self.bot.wait_until_ready()
+
         log_channel = self.bot.get_channel(938936724535509012)
         log_server = self.bot.get_guild(755722576445046806)
         if invite.guild.id == log_server.id:
@@ -302,7 +335,7 @@ class events(commands.Cog):
 
     @commands.Cog.listener(name="on_command")
     async def blacklist_check(self, ctx):
-        await self.bot.wait_until_ready()
+
         if ctx.author.bot:
             return
         db_blacklist_user = self.bot.db.get_blacklist(
@@ -316,7 +349,7 @@ class events(commands.Cog):
 
     @commands.Cog.listener(name="on_command")
     async def badge(self, ctx):
-        await self.bot.wait_until_ready()
+
         if ctx.author.bot:
             return
 
@@ -333,7 +366,7 @@ class events(commands.Cog):
 
     @commands.Cog.listener(name="on_command")
     async def eco(self, ctx):
-        await self.bot.wait_until_ready()
+
         if ctx.author.bot:
             return
 
@@ -346,16 +379,16 @@ class events(commands.Cog):
                 f"No economy entry detected for: {ctx.author.id} / {ctx.author} | Added to database!"
             )
 
-    @commands.Cog.listener(name="on_command")
-    async def remove_admin_command_uses(self, ctx):
-        """Deletes the invoked command that comes from admin.py"""
-        await self.bot.wait_until_ready()
-        if ctx.author.bot:
-            return
-        # check the command to see if it comes from admin.py
-        if ctx.command.cog_name == "admin":
-            with contextlib.suppress(Exception):
-                await ctx.message.delete()
+    # @commands.Cog.listener(name="on_command")
+    # async def remove_admin_command_uses(self, ctx):
+    #     """Deletes the invoked command that comes from admin.py"""
+
+    #     if ctx.author.bot:
+    #         return
+    #     # check the command to see if it comes from admin.py
+    #     if ctx.command.cog_name == "admin":
+    #         with contextlib.suppress(Exception):
+    #             await ctx.message.delete()
 
     # @commands.Cog.listener(name="on_member_join")
     # async def autorole(self, member):
@@ -368,7 +401,7 @@ class events(commands.Cog):
 
     @commands.Cog.listener(name="on_command")
     async def logger_shit(self, ctx):
-        await self.bot.wait_until_ready()
+
         if not ctx.guild or ctx.author.bot or ctx.interaction:
             return
 
@@ -378,12 +411,12 @@ class events(commands.Cog):
         if db_user and not db_user.message_tracking:
             return
 
-        if not ctx.guild.chunked:
-            with contextlib.suppress(Exception):
-                await ctx.guild.chunk()
-                log(
-                    f"{formatColor('[CHUNK]', 'bold_red')} Chunked server {formatColor(f'{ctx.guild.id}', 'grey')}"
-                )
+        # if not ctx.guild.chunked:
+        #     with contextlib.suppress(Exception):
+        #         await ctx.guild.chunk()
+        #         log(
+        #             f"{formatColor('[CHUNK]', 'bold_red')} Chunked server {formatColor(f'{ctx.guild.id}', 'grey')}"
+        #         )
 
         if await self.bot.is_owner(ctx.author):
             log(
@@ -396,7 +429,6 @@ class events(commands.Cog):
 
     @commands.Cog.listener()
     async def on_guild_remove(self, guild):
-        await self.bot.wait_until_ready()
 
         embed = discord.Embed(title="Removed from a server.", colour=0xFF0000)
         try:
@@ -428,14 +460,12 @@ class events(commands.Cog):
 
     @commands.Cog.listener(name="on_guild_join")
     async def MessageSentOnGuildJoin(self, guild):
-        await self.bot.wait_until_ready()
-        if not guild.chunked:
-            await guild.chunk()
+
         nick = f"[tp!] {self.bot.user.name}"
         try:
             await guild.me.edit(nick=nick)
         except discord.errors.Forbidden:
-            return logger.error(f"Unable to change nickname in {guild.id}")
+            return log(f"Unable to change nickname in {guild.id}")
         else:
             log(f"Changed nickname to {nick} in {guild.id}")
         embed = discord.Embed(
@@ -479,19 +509,6 @@ class events(commands.Cog):
             log(f"Left {guild.id} / {guild.name} because it was blacklisted")
 
     @commands.Cog.listener(name="on_guild_join")
-    async def ban_on_join(self, guild):
-        if guild.id != 770873933217005578:
-            return
-        objs = await self.bot.db.fetch_blacklists()
-        user_ids = [x.user_id for x in objs if x.is_blacklisted]
-        for user in user_ids:
-            coom = await self.bot.fetch_user(user)
-            with contextlib.suppress(Exception):
-                await guild.ban(coom, reason="AGB Global Blacklist")
-        log(f"Successfully banned {len(user_ids)} blacklisted users from {guild.id}")
-        await asyncio.sleep(0.5)
-
-    @commands.Cog.listener(name="on_guild_join")
     async def add_ppl_on_join(self, guild):
         # check to see if the servers member count is over x people, and if it is, wait to add them until the next hour
         if len(guild.members) > 300:
@@ -514,37 +531,27 @@ class events(commands.Cog):
                     f"New user detected: {formatColor(member.id, 'green')} | Added to database!"
                 )
 
-    # @commands.Cog.listener(name="on_message")
-    # async def automod_sql(self, ctx):
-    #     if ctx.author.bot:
-    #         return
-    #     else:
-    #         pass
-    #     try:
-    #         cursor_n.execute(
-    #             f"SELECT * FROM automod WHERE guildId = {ctx.guild.id}")
-    #     except Exception:
-    #         pass
-    #     automod_rows = cursor_n.rowcount
-    #     if automod_rows == 0:
-    #         cursor_n.execute(
-    #             f"INSERT INTO automod (guildId) VALUES ({ctx.guild.id})")
-    #         mydb_n.commit()
-    #     else:
-    #         return
+    @blacklist_sweep.before_loop
+    async def delay_task_until_bot_ready(self):
+        await self.bot.wait_until_ready()
+        await asyncio.sleep(5)
 
+    async def cog_unload(self) -> None:
+        self.blacklist_sweep.stop()
+        log("Blacklist Sweep - Stopped")
+        self.presence_loop.stop()
+        self.update_stats.stop()
 
-# from index import cursor_n, mydb_n
-# for guild in self.guilds:
-#     cursor_n.execute(f"SELECT * FROM public.guilds WHERE guildId = '{guild.id}'")
-#     row_count = cursor_n.rowcount
-#     if row_count == 0:
-#         cursor_n.execute(
-#             f"INSERT INTO public.guilds (guildId) VALUES ('{guild.id}')"
-#         )
-#         mydb_n.commit()
-#         print(f"{guild.id} | Added to database!")
-# testing, ignore this
+    async def cog_reload(self) -> None:
+        self.blacklist_sweep.stop()
+        log("Blacklist Sweep - Reloaded")
+
+    async def cog_load(self) -> None:
+        self.presence_loop.start()
+        self.blacklist_sweep.start()
+        self.update_stats.start()
+        self.status_page.start()
+        log("Blacklist Sweep - Started")
 
 
 async def setup(bot: Bot) -> None:

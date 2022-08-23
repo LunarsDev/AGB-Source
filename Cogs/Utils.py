@@ -5,6 +5,7 @@ import io
 import os
 import random
 from contextvars import ContextVar
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Dict, Union
 
@@ -36,6 +37,11 @@ async def setup(bot: Bot):
     await bot.add_cog(Utils(bot))
     # global bot
     # bot = bot_start
+
+
+def create_blacklist_date(days):
+    now = datetime.now() + timedelta(days=int(days), minutes=1)
+    return str(now)
 
 
 class Utils(commands.Cog):

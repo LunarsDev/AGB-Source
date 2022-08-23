@@ -2,6 +2,7 @@ from random import choice
 
 # Stuff for the cog
 
+# from https://github.com/PredaaA/predacogs/tree/master/nsfw 
 
 def emoji():
     """Randomize footer emojis."""

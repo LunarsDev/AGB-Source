@@ -4,33 +4,143 @@ import asyncio
 import concurrent
 import datetime
 import importlib
+import inspect
 import io
 import os
+import random
 import re
 import subprocess
 import textwrap
+import time
 import traceback
 from contextlib import redirect_stdout, suppress
 from subprocess import check_output
-from typing import TYPE_CHECKING, Literal, Optional, Union
+from typing import TYPE_CHECKING, Literal, Optional
 
 import aiohttp
 import discord
+import httpx
 import speedtest
 from discord.ext import commands
-from index import colors, config, delay, logger
+from index import colors, delay, logger, EmbedMaker
 from Manager.database import Connection
 from Manager.logger import formatColor
+from Manager.objects import Table
 from sentry_sdk import capture_exception
-from utils import default, http, imports, permissions
+from utils import default, imports, permissions
 from utils.default import log
+from utils.errors import BlacklistedUser
 
 from .Utils import random
 
 # from utils.checks import InteractiveMenu
+OS = discord.Object(id=975810661709922334)
 
 if TYPE_CHECKING:
     from index import Bot
+
+
+class EvalContext:
+    def __init__(self, interaction):
+        self.interaction = interaction
+        self.message = interaction.message
+        self.bot = interaction.client
+        self.author = interaction.user
+        self.config = imports.get("config.json")
+
+    async def send(self, *args, **kwargs):
+        await self.interaction.followup.send(*args, **kwargs)
+
+
+class EvalModal(discord.ui.Modal, title="Evaluate Code"):
+    body = discord.ui.TextInput(
+        label="Code", style=discord.TextStyle.paragraph)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+
+        start = time.time()
+
+        startTime = datetime.datetime.now()
+
+        ectx = EvalContext(interaction)
+
+        env = {
+            "ctx": ectx,
+            "interaction": interaction,
+            "bot": interaction.client,
+            "channel": interaction.channel,
+            "author": interaction.user,
+            "guild": interaction.guild,
+            "message": interaction.message,
+            "source": inspect.getsource,
+        }
+
+        body = str(self.body)
+
+        env.update(globals())
+
+        stdout = io.StringIO()
+
+        await interaction.followup.send(f"**Code:**\n```py\n{body}```")
+
+        to_compile = f'async def func():\n{textwrap.indent(body, "  ")}'
+
+        async def paginate_send(ctx, text: str):
+            """Paginates arbatrary length text & sends."""
+            last = 0
+            pages = []
+            for curr in range(0, len(text), 1980):
+                pages.append(text[last:curr])
+                last = curr
+            pages.append(text[last:])
+            pages = list(filter(lambda a: a != "", pages))
+            for page in pages:
+                await ctx.send(f"```py\n{page}```")
+
+        try:
+            exec(to_compile, env)
+            datetime.datetime.now() - startTime
+            end = time.time()
+            end - start
+        except Exception as e:
+            await paginate_send(ectx, f"{e.__class__.__name__}: {e}")
+            return await interaction.message.add_reaction("\u2049")  # x
+
+        func = env["func"]
+        try:
+            with redirect_stdout(stdout):
+                ret = await func()
+        except Exception as e:
+            value = stdout.getvalue()
+            await paginate_send(ectx, f"{value}{traceback.format_exc()}")
+            return await interaction.message.add_reaction("\u2049")  # x
+        value = stdout.getvalue()
+        if ret is None:
+            if value:
+                await paginate_send(ectx, str(value))
+        else:
+            await paginate_send(ectx, f"{value}{ret}")
+
+
+class EvalView(discord.ui.View):
+    def __init__(self, author: int, *args, **kwargs):
+        self.modal = EvalModal()
+        self.author = author
+        super().__init__(timeout=120)
+
+    @discord.ui.button(
+        label="Click Here",
+        style=discord.ButtonStyle.blurple,
+        custom_id="AGBEvalCustomID",
+    )
+    async def click_here(self, interaction: discord.Interaction, _: discord.ui.Button):
+        if self.author != interaction.user.id:
+            return await interaction.response.send_message(
+                "You can't do this!", ephemeral=True
+            )
+        await interaction.response.send_modal(self.modal)
+        self.stop()
 
 
 class PersistentView(discord.ui.View):
@@ -47,14 +157,38 @@ class PersistentView(discord.ui.View):
         guild = await i.client.fetch_guild(975810661709922334)
         bruh = await guild.fetch_channel(990187200656322601)
         # get the embeds image url
-        await bruh.send(f"{i.message.embeds[0].image.url} reported by {i.user.id}")
-        # disable the button once its been used
-        b.disabled = True
-        await i.response.edit_message(view=self)
-        await i.followup.send(
-            "Report sent successfully.\nIf the reported image follows our image report guidelines it will be removed shortly, if it does not, you will be getting a DM.",
-            ephemeral=True,
-        )
+        embed_image = i.message.embeds[0].image.url
+        async with aiohttp.ClientSession() as session:
+            async with session.get(embed_image) as resp:
+                if resp.status == 200:
+                    await bruh.send(f"{embed_image} reported by {i.user.id}")
+                    # disable the button once its been used
+                    b.disabled = True
+                    await i.response.edit_message(view=self)
+                    await i.followup.send(
+                        "Thank you for reporting this image, we trust that you reported it correctly; by following our rules, we will take action against any image that is deemed to be in violation of our rules.\nImages are eligible for reporting if they are in violation of our following rules:\n__*__ Not porn(not actual porn, lewd / suggestive positions and actions, etc)\n__*__ Gross(scat, gore, rape, etc)\n__*__ Breaks ToS(shota, loli, etc)",
+                        ephemeral=True,
+                    )
+                else:
+                    await i.response.edit_message(view=self)
+                    await i.followup.send(
+                        "Report failed.\nThe image you sent was not found in the api.",
+                        ephemeral=True,
+                    )
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        db = interaction.client.db
+        user_id = interaction.user.id
+        blacklisted_user = await db.fetch_blacklist(user_id)
+
+        if blacklisted_user and blacklisted_user.is_blacklisted:
+            await interaction.response.send_message(
+                f"You are blacklisted from using this bot for the following reason\n`{blacklisted_user.reason}`",
+                ephemeral=True,
+            )
+            return False
+
+        return True
 
 
 class InteractiveMenu(discord.ui.View):
@@ -121,14 +255,14 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
 
         bot.add_check(self.blacklist_check)
         self.nword_re = r"\b(n|m|и|й){1,32}(i|1|l|!|ᴉ|¡){1,32}((g|ƃ|6|б{2,32}|q){1,32}|[gqgƃ6б]{2,32})(a|e|3|з|u)(r|Я|s|5|$){1,32}\b"
-        self.nword_re_comp = re.compile(self.nword_re, re.IGNORECASE | re.UNICODE)
+        self.nword_re_comp = re.compile(
+            self.nword_re, re.IGNORECASE | re.UNICODE)
         self.afks = {}
 
         self.errors = (
             commands.NoPrivateMessage,
             commands.MissingPermissions,
             commands.BadArgument,
-            commands.CommandInvokeError,
             commands.ChannelNotReadable,
             commands.MaxConcurrencyReached,
             commands.BotMissingPermissions,
@@ -142,10 +276,14 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
         )
 
     async def blacklist_check(self, ctx: commands.Context):
-        bl = self.bot.db.get_blacklist(
-            ctx.author.id
-        ) or await self.bot.db.fetch_blacklist(ctx.author.id, cache=True)
-        return not bl.is_blacklisted if bl else True
+        bl = await self.bot.db.fetch_blacklist(ctx.author.id, cache=True)
+        if bl and bl.is_blacklisted:
+            raise BlacklistedUser(
+                obj=bl,
+                user=ctx.author,
+            )
+
+        return True
 
     async def run_process(self, command):
         try:
@@ -162,10 +300,8 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
 
     def cleanup_code(self, content):
         """Automatically removes code blocks from the code."""
-        # remove ```py\n```
         if content.startswith("```") and content.endswith("```"):
             return "\n".join(content.split("\n")[1:-1])
-        # remove `foo`
         return content.strip("` \n")
 
     async def try_to_send_msg_in_a_channel(self, guild, msg):
@@ -201,6 +337,100 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
                         f"{len(members)} members found, please be more specific."
                     ) from e
 
+    async def get_or_remove_users_from_database(
+        self,
+        action: Literal["GET", "REMOVE"],
+        user_ids: Optional[list[int]] = None,
+        /,
+        *,
+        exclude: Optional[list[Table]] = None,
+    ) -> Optional[list[int]]:
+        if user_ids is None:
+            user_ids = []
+        if exclude is None:
+            exclude = []
+        remove_from = [
+            Table.BADGES,
+            Table.BLACKLIST,
+            Table.REMINDERS,
+            Table.USER_ECONOMY,
+            Table.USERS,
+        ]
+        entries: list[int] = []
+        for table in remove_from:
+            if table in exclude:
+                continue
+            user_id_key, cache = self.bot.db._table_to_cache[table]
+            if action == "GET":
+                query = f"SELECT {user_id_key} FROM {table}"
+                res = await self.bot.db.fetch(query)
+                entries.extend(int(entry[user_id_key]) for entry in res)
+            elif action == "REMOVE":
+                for user_id in user_ids:
+                    cache.pop(int(user_id), None)
+
+                query = f"DELETE FROM {table} WHERE {user_id_key} = $1"
+                await self.bot.db.executemany(query, [str(user_id) for user_id in user_ids])
+
+        if action == "GET":
+            return entries
+
+    @commands.hybrid_group(name="owner")
+    @discord.app_commands.guilds(OS)
+    @commands.check(permissions.is_owner)
+    async def owner(self, ctx: commands.Context):
+        """
+        Owner-only commands.
+        """
+        await ctx.send("Owner-only commands.", ephemeral=True)
+
+    @commands.hybrid_group(name="blacklist")
+    @discord.app_commands.guilds(OS)
+    @commands.check(permissions.is_owner)
+    async def blacklist(self, ctx: commands.Context):
+        """
+        Blacklist commands
+        """
+        await ctx.send("Blacklist commands.", ephemeral=True)
+
+    @commands.hybrid_command()
+    @discord.app_commands.guilds(OS)
+    @commands.check(permissions.is_owner)
+    async def checkdbusers(self, ctx: commands.Context, view: bool = False):
+        """
+        Check the database for users and remove them if they don't share a server with the bot
+
+        If `view` is set to `True`, it will only show the users that are missing, not remove them.
+        Default is `False`.
+        """
+        await ctx.typing()
+        # type: ignore
+        db_users: list[int] = await self.get_or_remove_users_from_database("GET")
+        set_db_users = set(db_users)
+        set_discord_users = {x.id for x in self.bot.users}
+        extra_users = list(set_db_users - set_discord_users)
+        if view:
+            await ctx.send(
+                (
+                    f"Unqiue users in the database: {len(set_db_users)}\n"
+                    f"Unique users for the bot: {len(set_discord_users)}\n"
+                    f"{len(extra_users)} users are in the database but not sharing a server with the bot.\n"
+                    "set `view` to False to remove them from the database."
+                )
+            )
+            return
+
+        msg = await ctx.send(
+            f"{ctx.author.mention}, found {len(extra_users)} extra users in the database.... removing..."
+        )
+        try:
+            await self.get_or_remove_users_from_database("REMOVE", extra_users)
+        except Exception as e:
+            await msg.reply(f"Error: {e}")
+            return
+
+        await msg.reply("Done! ✅")
+
     @commands.Cog.listener()
     async def on_guild_join(self, guild: discord.Guild):
         if self.nword_re_comp.search(guild.name.lower()):
@@ -222,7 +452,8 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
         info2 = self.bot.get_channel(776514195465568257)
         info3 = self.bot.get_channel(755722908122349599)
         guild = member.guild
-        embed = discord.Embed(title="User Joined", colour=discord.Colour.green())
+        embed = discord.Embed(title="User Joined",
+                              colour=discord.Colour.green())
         embed.add_field(
             name=f"Welcome {member}",
             value=f"Welcome {member.mention} to {guild.name}!\nPlease read <#776514195465568257> to get color roles for yourself and common questions about AGB!",
@@ -263,43 +494,140 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
                 delete_after=5,
             )
 
-    @commands.command(name="userfetch")
+    ######
+    #
+    # Attempted AFK Feature : Head hurts might fix later
+    #
+    ######
+    # @commands.Cog.listener(name="on_message")
+    # async def afk_check(self, message):
+    #     def afk_remove(afk):
+    #         if "[AFK]" in afk.split():
+    #             return " ".join(afk.split()[1])
+    #         else:
+    #             return afk
+
+    #     if message.author.id in afks.keys():
+    #         afks.pop(message.author.id)
+    #         try:
+    #             await message.author.edit(nick = afk_remove(message.author.display_name))
+    #             await message.channel.send(f"Welcome back, {message.author.mention}! I have removed your nickname")
+    #         except Exception:
+    #             pass
+    #         await message.channel.send(f"Welcome back, {message.author.mention}!")
+
+    #     for id, reason in afks.items():
+    #         member = get(message.guild.members, id = id)
+    #         if (message.reference and member == (await message.channel.fetch_message(message.reference.message_id)).author) or member.id in message.raw_mentions:
+    #             await message.send(f"{member.name} is AFK: `{reason}`")
+
+    # @commands.command(name="afk")
+    # @commands.check(permissions.is_owner)
+    # async def afk(self, ctx, reason = "AFK"):
+    #     member = ctx.author
+    #     if member.id in afks.keys():
+    #         afks.pop(member.id)
+    #     else:
+    #         try:
+    #             member.edit(nick = f"[AFK] {member.display_name}")
+    #         except Exception:
+    #             pass
+
+    #     afks[member.id] = reason
+    #     embed = discord.Embed(title = ":zzz: AFK", description = f"{member.display_name} is AFK", color = member.color)
+    #     embed.set_thumbnail(url = member.avatar)
+    #     embed.set_author(name = self.bot.user.name, icon_url = self.bot.user.avatar)
+    #     embed.add_field(name = "Note", value = reason)
+    #     await ctx.send(embed = embed)
+
+    @owner.command(name="apigen")
     @commands.check(permissions.is_owner)
-    async def user_fetch(self, ctx):
-        for user in self.bot.users:
-            if user.bot:
-                continue
+    async def api_gen(self, ctx, *, email: str):
+        def check(e):
+            if re.search(self.email_re, email):
+                return True
+            elif "agb-dev.xyz" in email:
+                return True
+            else:
+                return False
 
-            db_user = await self.bot.db.fetch_user(user.id)
-            if not db_user:
-                await self.bot.db.add_user(user.id)
-                log(
-                    f"{formatColor(user, 'green')} ({formatColor(str(user.id), 'gray')}) added to the database [{formatColor('users', 'gray')}]"
-                )
+        embed = discord.Embed(title="API Token Gen",
+                              colour=discord.Colour.green())
 
-    @commands.command()
-    @commands.check(permissions.is_owner)
-    async def servers(self, ctx):
-        """Lists all servers the bot is in and sends it to a text file"""
-        filename = f"{ctx.guild.id}"
-        with open(f"{str(filename)}.txt", "a", encoding="utf-8") as f:
-            for guild in self.bot.guilds:
-                data = f"{guild.id}: {guild}"
-                f.write(data + "\n")
-                continue
-        try:
-            await ctx.send(
-                content="Sorry if this took a while to send, but here is all of the servers the bot is in!",
-                file=discord.File(f"{str(filename)}.txt"),
+        async def api_send_email(email, username, token):
+            async with aiohttp.ClientSession(
+                headers={"Content-Type": "application/json"}
+            ) as s:
+                async with s.post(
+                    "https://api.emailjs.com/api/v1.0/email/send",
+                    json={
+                        "service_id": "service_lunarapi",
+                        "template_id": "template_l08wv0d",
+                        "user_id": "JbFTDHDsfREYjwbJe",
+                        "accessToken": "11izhUPQGL_xrrkD9TYFV",
+                        "template_params": {
+                            "user_email": f"{email}",
+                            "user_name": f"{username}",
+                            "api_key": f"{token}",
+                        },
+                    },
+                ) as r:
+                    pass
+
+        if check(email):
+            config = imports.get("apidb_config.json")
+            api_db = Connection(self.bot, config)
+            await api_db.create_connection()
+
+            username = email.partition("@")[0]
+            p = check_output(
+                ["node", "../lunar-api/genToken.js", f"--u={email}"])
+            token = str(p, "utf-8")
+
+            await api_db.execute(f"SELECT * FROM users WHERE email = '{email}'")
+            await api_db.execute(
+                f"UPDATE users SET apiverified = True, token = '{token}' WHERE email = '{email}'"
             )
-        except Exception as e:
-            capture_exception(e)
-            await ctx.send(
-                "I couldn't send the file of this servers bans for whatever reason"
-            )
-        os.remove(f"{filename}.txt")
+            await api_db.close()
 
-    @commands.command()
+            embed.add_field(
+                name=f"Token for `{email}`", value=f"```{token}```")
+            embed.add_field(
+                name=f"User Created [{username}]",
+                value="Successfully created and added the user to the API Database!",
+            )
+            await ctx.send(embed=embed)
+
+            # Send Email VIA http POST Request
+            await api_send_email(email, username, token)
+        else:
+            embed.add_field(
+                name="Error", value="Invalid email. `Expected: *@*.*`")
+            await ctx.send(embed=embed)
+            return
+
+    # @owner.command()
+    # @commands.check(permissions.is_owner)
+    # async def servers(self, ctx):
+    #     filename = f"{ctx.guild.id}"
+    #     with open(f"{str(filename)}.txt", "a", encoding="utf-8") as f:
+    #         for guild in self.bot.guilds:
+    #             data = f"{guild.id}: {guild}"
+    #             f.write(data + "\n")
+    #             continue
+    #     try:
+    #         await ctx.send(
+    #             content="Sorry if this took a while to send, but here is all of the servers the bot is in!",
+    #             file=discord.File(f"{str(filename)}.txt"),
+    #         )
+    #     except Exception as e:
+    #         capture_exception(e)
+    #         await ctx.send(
+    #             "I couldn't send the file of this servers bans for whatever reason"
+    #         )
+    #     os.remove(f"{filename}.txt")
+
+    @owner.command()
     @commands.check(permissions.is_owner)
     async def addstatus(self, ctx, *, status: str):
         """Add status to the bots status list
@@ -320,10 +648,8 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
         status = status.strip().replace("'", "")
         new_status = await self.bot.db.add_status(row_count, status)
         embed = discord.Embed(color=colors.prim)
-        embed.set_author(
-            name=self.bot.user.name,
-            icon_url=self.bot.user.avatar,
-        )
+        embed.set_author(name=self.bot.user.name,
+                         icon_url=self.bot.user.avatar)
         embed.add_field(
             name="Status",
             value=f"Added status to db:\n```\n{new_status.status}```",
@@ -334,26 +660,42 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
 
     @commands.command()
     @commands.check(permissions.is_owner)
-    async def globalblacklist(self, ctx, user):
+    async def findmutuals(self, ctx, user: discord.User = None):
+        user = ctx.author if user is None else user
+        mutuals = [
+            f"{guild.id}: {guild.name}"
+            for guild in self.bot.guilds
+            if user in guild.members
+        ]
+        mutuals = "\n".join(mutuals)
+        await ctx.send(f"```{mutuals}```")
+        return
+
+    @owner.command()
+    @commands.check(permissions.is_owner)
+    async def globalblacklist(self, ctx, user: str):
+        await ctx.typing(ephemeral=True)
+        yes = await ctx.send("Working...", ephemeral=True)
         id = user
         for guild in self.bot.guilds:
             user = await ctx.bot.fetch_user(id)
             try:
                 user = await ctx.bot.fetch_user(id)
                 try:
-                    entry = await guild.fetch_ban(user)
+                    await guild.fetch_ban(user)
                     log(f"{user.name} is already banned from {guild.name}")
                 except discord.NotFound:
                     await guild.ban(user, reason="AGB Global Blacklist")
+                    await yes.edit(content=f"Banned {user.name} from {guild.name}")
                     log(f"Banned {user.name} from {guild.name}")
             except discord.Forbidden:
                 log(f"Could not ban {user.name} from {guild.name}")
         await asyncio.sleep(random.randint(0, 6))
+        await yes.edit("Done!")
 
-    @commands.command(name="dbfetch")
+    @owner.command(name="dbfetch")
     @commands.check(permissions.is_owner)
     async def db_fetch(self, ctx):
-        """Fetch all users and guilds, and store them in the DB"""
         message = await ctx.send(
             "Fetching all servers and users, and adding them to the DB, please wait!"
         )
@@ -392,16 +734,88 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
                 )
 
             ### Blacklist Table Check ###
-            blacklistRows = await self.bot.db.fetch_blacklist(str(user.id))
+            blacklistRows = await self.bot.db.fetch_blacklist(user.id)
             if not blacklistRows:
-                await self.bot.db.add_blacklist(str(user.id))
+                await self.bot.db.add_blacklist(user.id)
                 log(
                     f"{formatColor(user, 'green')} ({formatColor(str(user.id), 'gray')}) added to the database [{formatColor('blacklist', 'gray')}]"
                 )
 
         await message.edit(content="Done!")
 
-    @commands.hybrid_command()
+    async def get_commit(self, ctx):
+        COMMAND = "git branch -vv"
+        proc = await asyncio.create_subprocess_shell(
+            COMMAND, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+
+        stdout, stderr = await proc.communicate()
+        stdout = stdout.decode().split("\n")
+        for branch in stdout:
+            if branch.startswith("*"):
+                return branch
+        raise ValueError()
+
+    @commands.group()
+    @commands.check(permissions.is_owner)
+    async def pull(self, ctx):
+        if ctx.invoked_subcommand is not None:
+            return
+        COMMAND = "git pull"
+        addendum = ""
+        proc = await asyncio.create_subprocess_shell(
+            COMMAND, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+
+        stdout, stderr = await proc.communicate()
+        stdout = stdout.decode()
+        if "no tracking information" in stderr.decode():
+            COMMAND = "git pull"
+            proc = await asyncio.create_subprocess_shell(
+                COMMAND, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+
+            stdout, stderr = await proc.communicate()
+            stdout = stdout.decode()
+            addendum = "\n\n**Warning: no upstream branch is set.  I automatically pulled from origin/main but this may be wrong.  To remove this message and make it dynamic, please run `git branch --set-upstream-to=origin/<branch> <branch>`**"
+
+        embed = discord.Embed(
+            title="Git pull", description="", color=colors.prim)
+        if "Fast-forward" not in stdout:
+            if "Already up to date." in stdout:
+                embed.description = "Code is up to date."
+            else:
+                embed.description = "Pull failed: Fast-forward strategy failed.  Look at logs for more details."
+
+                log(stdout)
+            embed.description += addendum
+            embed.description += f"```py\n{stdout}```"
+            await ctx.send(embed=embed)
+            return
+        try:
+            current = await self.get_commit(ctx)
+        except ValueError:
+            pass
+        else:
+            embed.description += f"`{current[2:]}`\n"
+        embed.description += addendum
+        embed.description += f"```py\n{stdout}```"
+        await ctx.send(embed=embed)
+
+    @pull.command()
+    @commands.check(permissions.is_owner)
+    async def fix(self, ctx):
+        COMMAND = "./git-fix.sh"
+        os.system("chmod +x ./git-fix.sh")
+        proc = await asyncio.create_subprocess_shell(
+            COMMAND, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await proc.communicate()
+        stdout = stdout.decode()
+        log(stdout)
+        await EmbedMaker(title="Git fix", description=f"```py\n{stdout}```").send(ctx)
+
+    @owner.command()
     @commands.check(permissions.is_owner)
     async def checkbanperm(self, ctx, member: discord.Member):
         # make a command to check if a user can be banned from a server
@@ -427,7 +841,7 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
         except Exception:
             await ctx.send("Something happened", ephemeral=True)
 
-    @commands.command(name="chunk")
+    @owner.command(name="chunk")
     @commands.check(permissions.is_owner)
     async def chunk_guilds(self, ctx):
         bruh = await ctx.send("Chunking guilds...")
@@ -460,24 +874,9 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
                 content=f"Done chunking guilds! {chunked_guilds}/{len(self.bot.guilds)} guilds chunked!"
             )
 
-    @commands.command(name="massnick")
-    @commands.check(permissions.is_owner)
-    async def massnick(self, ctx, *, nick: str):
-        initial = await ctx.send("Mass nicking...")
-        async with ctx.channel.typing():
-            for member in ctx.guild.members:
-                if not member.bot:
-                    try:
-                        await member.edit(nick=nick)
-                        await asyncio.sleep(0.5)
-                    except Exception as e:
-                        capture_exception(e)
-            await initial.edit(content="Done")
-
-    @commands.command(aliases=["speedtest"])
+    @owner.command(aliases=["speedtest"])
     @commands.check(permissions.is_owner)
     async def netspeed(self, ctx):
-        """Test the servers internet speed."""
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         loop = asyncio.get_event_loop()
         speed_test = speedtest.Speedtest(secure=True)
@@ -519,403 +918,231 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
         embed.add_field(name="Upload", value=message_up)
         return embed
 
-    @commands.command(
-        name="sqlt",
-    )
-    @commands.check(permissions.is_owner)
-    async def sqlt(self, ctx, *, query: str):
-        data = await self.bot.db.execute(f"{query}RETURNING *")
-        await ctx.send(data)
+    # @owner.command(name="sqlt")
+    # @commands.check(permissions.is_owner)
+    # async def sqlt(self, ctx, *, query: str):
+    #     data = await self.bot.db.execute(f"{query}RETURNING *")
+    #     await ctx.send(data)
 
-    @commands.command(
-        name="blacklist",
-        invoke_without_command=True,
-        pass_context=True,
-    )
+    @blacklist.command(name="temp")
     @commands.check(permissions.is_owner)
-    async def blacklist(self, ctx, user: Optional[discord.User] = None, *, list=None):
-        """Blacklist users from using the bot. Pass no args to see a list of blacklisted users"""
-        if user is None:
-            blist = [
-                key
-                for key, value in self.bot.db._blacklists.items()
-                if value.is_blacklisted
-            ]
-            conv = commands.UserConverter()
-            users = await asyncio.gather(
-                *[conv.convert(ctx, str(_id)) for _id in blist]
+    async def blacklist_add_temp(
+        self,
+        ctx,
+        user: discord.User,
+        *,
+        days: int,
+        silent: bool = False,
+        reason: str = None,
+    ):
+        db_user = await self.bot.db.fetch_blacklist(user.id)
+        if not db_user or db_user is None:
+            await self.bot.db.add_temp_blacklist(user.id, blacklisted=True, days=days)
+            await EmbedMaker(
+                title="Temporary Blacklist",
+                description=f"{user.id} was not in the database!\nThey have been added and blacklisted for {days} days.",
+            ).send(ctx)
+        else:
+            # await self.bot.db.update_temp_blacklist(
+            #     user.id, blacklisted=True, days=days
+            # ) # Exchanged for modify, leaving it for archival and reverting purposes
+
+            await db_user.modify(blacklisted=True, blacklistedtill=days, reason=reason)
+            await EmbedMaker(
+                title="Temporary Blacklist",
+                description=f"{user.id} has been blacklisted for {days} days.",
+            ).send(ctx)
+        if not silent:
+            try:
+                if reason is not None:
+                    e = EmbedMaker(
+                        title="Temporary Blacklist",
+                        description=f"You have been temporarily blacklisted from using the bot for the following reason\n{reason}.\n\nThis blacklist lasts for {days} days unless you can email us a good reason why you should be whitelisted - `contact@lunardev.group`",
+                    )
+                await user.send(embed=e)
+                await EmbedMaker(
+                    title="Blacklist DM",
+                    description="The user has been notified of their blacklist.",
+                ).send(ctx)
+            except:
+                await EmbedMaker(
+                    title="Blacklist DM",
+                    description="I was unable to DM the user, they have still been blacklisted.",
+                ).send(ctx)
+
+    @blacklist.command(name="add", invoke_without_command=True, pass_context=True)
+    @commands.check(permissions.is_owner)
+    async def blacklist_add(
+        self,
+        ctx,
+        user: Optional[discord.User] = None,
+        *,
+        list=None,
+        reason: str = "No reason",
+    ):
+        if not ctx.interaction:
+            return await ctx.send(
+                "This command is only available in slash commands. Its easier to use that way.",
+                delete_after=3,
             )
-            join_users = "\n".join(f"{str(user)} ({user.id})" for user in users)
-            users = join_users if users else "No one has been blacklisted"
-            await ctx.send(f"Blacklisted users: {users}")
-            return
+        db_user = await self.bot.db.fetch_blacklist(user.id)
 
-        user_blacklist = self.bot.db._blacklists.get(user.id)
-        if not user_blacklist or user_blacklist.is_blacklisted is False:
+        if not db_user or db_user is None:
+            await self.bot.db.add_blacklist(user.id, blacklisted=True)
+            await EmbedMaker(
+                title="Blacklist",
+                description=f"{user.id} was not in the database!\nThey have been added and blacklisted.",
+            )
+        else:
+            # await self.bot.db.update_temp_blacklist(
+            #     user.id, blacklisted=True, days=days
+            # ) # Exchanged for modify, leaving it for archival and reverting purposes
+
+            await db_user.modify(blacklisted=True, reason=reason)
+            await EmbedMaker(
+                title="Permanent Blacklist",
+                description=f"{user.id} has been blacklisted.",
+            ).send(ctx)
+        try:
+            if reason is not None:
+                await user.send(
+                    embed=EmbedMaker(
+                        title="Blacklist",
+                        description=f"You have been blacklisted from using the bot for the following reason\n{reason}.\n\n If you believe this is a mistake, please email us - `contact@lunardev.group`",
+                    )
+                )
+            await EmbedMaker(
+                title="Blacklist DM",
+                description="The user has been notified of their blacklist.",
+            ).send(ctx)
+        except:
+            await EmbedMaker(
+                title="Blacklist DM",
+                description="I was unable to DM the user, they have still been blacklisted.",
+            ).send(ctx)
+
+    @owner.command()
+    @commands.check(permissions.is_owner)
+    async def massblacklist(self, ctx, *, user_ids: str):
+        await ctx.typing()
+        if not ctx.interaction:
+            return await ctx.send(
+                "This command is only available in slash commands. Its easier to use that way.",
+                delete_after=3,
+            )
+        user_ids = user_ids.split(",")
+        for user_id in user_ids:
+            user_id = user_id.strip()
+            if not user_id.isdigit():
+                await ctx.send(f"{user_id} is not a valid user ID.")
+                continue
+            user = self.bot.get_user(int(user_id)) or await self.bot.fetch_user(
+                int(user_id)
+            )
+            if not user:
+                await ctx.send(f"{user_id} is not a valid user ID.")
+                continue
+            user_blacklist = self.bot.db._blacklists.get(user.id)
             if not user_blacklist:
                 await self.bot.db.add_blacklist(user.id, blacklisted=True)
-            else:
+            elif user_blacklist.is_blacklisted is False:
                 await user_blacklist.modify(blacklisted=True)
-
-            await ctx.send(f"{user} has been added to the blacklist.", delete_after=5)
-            await self.add_success_reaction()
-            try:
-                await user.send(
-                    (
-                        "You have been blacklisted from using the bot.\n\n"
-                        "This blacklist is permenant unless you can email us a good reason "
-                        "why you should be whitelisted - `contact@lunardev.group`"
-                    )
-                )
-            except Exception as e:
-                capture_exception(e)
-                await ctx.send(
-                    "I was unable to DM them, they may have DMs disabled, however they will still be blacklisted.",
-                    delete_after=10,
-                )
-            return
-        elif user_blacklist.is_blacklisted is True:
-            await user_blacklist.modify(blacklisted=False)
-            await ctx.send(
-                f"{user} has been removed from the blacklist.", delete_after=5
-            )
-            await self.add_success_reaction()
-            try:
-                await user.send(
-                    "Good job, you've been whitelisted. You can now use this bot."
-                )
-            except Exception as e:
-                capture_exception(e)
-                await ctx.send(
-                    "I couldn't DM the user, they may have DMs disabled, however they can still use the bot.",
-                    delete_after=10,
-                )
-
-    @commands.group(
-        aliases=["eco"],
-    )
-    @commands.check(permissions.is_owner)
-    async def economy(self, ctx):
-        if ctx.invoked_subcommand is None:
-            await ctx.send("Please use a subcommand. (eco)")
-
-    @economy.command(
-        aliases=["give"],
-    )
-    @commands.check(permissions.is_owner)
-    async def add(
-        self,
-        ctx: commands.Context,
-        amount: int,
-        user: Optional[Union[discord.User, discord.Member]] = None,
-        account: Literal["bank", "wallet", "balance"] = "bank",
-    ):
-        if amount == 0:
-            await ctx.send("Please enter a non-zero amount.")
-            return
-        elif amount < 0:
-            await ctx.send(f"Please use tp!eco remove {abs(amount)}")
-            return
-
-        user = user or ctx.author
-        account = account
-        if account == "balance":
-            account = "wallet"
-
-        # Fetch user's banking information
-        economy_user = self.bot.db.get_economy_user(user.id)
-        if not economy_user:
-            await ctx.send("User has no economy account.")
-            return
-
-        account_to_change = getattr(economy_user, account)
-        final_amount = account_to_change + amount
-        await economy_user.modify(**{account: final_amount})
-        await ctx.send(
-            f"Gave ${amount} to {str(user)}, their {account} is now at ${final_amount}"
-        )
-
-    @economy.command(
-        aliases=["take"],
-    )
-    @commands.check(permissions.is_owner)
-    async def remove(
-        self,
-        ctx: commands.Context,
-        amount: int,
-        user: Optional[Union[discord.User, discord.Member]] = None,
-        account: Literal["bank", "wallet", "balance"] = "bank",
-    ):
-        if amount == 0:
-            await ctx.send("Please enter a non-zero amount.")
-            return
-        elif amount < 0:
-            await ctx.send(f"Please use tp!eco remove {abs(amount)}")
-            return
-
-        user = user or ctx.author
-        account = account
-        if account == "balance":
-            account = "wallet"
-
-        # Fetch user's banking information
-        economy_user = self.bot.db.get_economy_user(user.id)
-        if not economy_user:
-            await ctx.send("User has no economy account.")
-            return
-
-        account_to_change = getattr(economy_user, account)
-
-        final_balance = account_to_change - amount
-        if final_balance < 0:
-            await ctx.send(
-                f"This would cause the user's balance to be a negative number.\nYou may take a max of ${account_to_change}."
-            )
-            return
-
-        await economy_user.modify(**{account: final_balance})
-        await ctx.send(
-            f"Took ${amount} from {str(user)}, their {account} is now at ${account_to_change + amount}"
-        )
-
-    @economy.command()
-    @commands.check(permissions.is_owner)
-    async def set(
-        self,
-        ctx: commands.Context,
-        amount: int,
-        user: Optional[Union[discord.User, discord.Member]] = None,
-        account: Literal["bank", "wallet", "balance"] = "bank",
-    ):
-        user = user or ctx.author
-        if amount == 0:
-            await ctx.send(f"Please use `tp!eco reset {user.id} {account}`")
-            return
-        elif amount < 0:
-            await ctx.send("Please enter a positive, non-zero number.")
-            return
-
-        account = account
-        if account == "balance":
-            account = "wallet"
-
-        # Fetch user's banking information
-        economy_user = self.bot.db.get_economy_user(user.id)
-        if not economy_user:
-            await ctx.send("User has no economy account.")
-            return
-
-        account_to_change = getattr(economy_user, account)
-
-        await economy_user.modify(**{account_to_change: amount})
-        await ctx.send(f"Set {account} to ${amount} for {str(user)}")
-
-    @economy.command(
-        aliases=["clear", "wipe"],
-    )
-    @commands.check(permissions.is_owner)
-    async def reset(
-        self,
-        ctx: commands.Context,
-        user: Optional[Union[discord.User, discord.Member]] = None,
-        account: Literal["bank", "wallet", "balance", "both"] = "both",
-    ):
-        user = user or ctx.author
-        account = account
-        if account == "balance":
-            account = "wallet"
-
-        def check(m):
-            return (
-                m.channel == ctx.channel
-                and m.author == ctx.author
-                and m.content in self.yes_responses
-            )
-
-        # Fetch user's banking information
-        economy_user = self.bot.db.get_economy_user(user.id)
-        if not economy_user:
-            await ctx.send("User has no economy account.")
-            return
-
-        await ctx.send(
-            f"Are you sure you want to erase {str(user)}'s {account}?\n**This action cannot be undone.**"
-        )
-        try:
-            response = await self.bot.wait_for("message", check=check, timeout=15)
-        except asyncio.TimeoutError:
-            await ctx.send("Canceled.")
-            return
-        else:
-            if not self.yes_responses[response.content]:
-                await ctx.send("Canceled")
-                return
-
-        to_reset = {}
-        if account == "bank":
-            to_reset["bank"] = 0
-        elif account == "wallet":
-            to_reset["wallet"] = 0
-        else:
-            to_reset["bank"] = 0
-            to_reset["wallet"] = 0
-
-        await economy_user.modify(**to_reset)
-        await ctx.send(f"Cleared {account} for {str(user)}")
-
-    @economy.error
-    async def economy_command_error(
-        self, ctx: commands.Context, error: commands.CommandError
-    ) -> None:
-        if isinstance(error, commands.BadLiteralArgument):
-            await ctx.send(
-                "You can only set/give/take to either the `bank` or `wallet`."
-            )
-            return
-
-        # might not work
-        return await self.bot.on_command_error(ctx, error)
-
-    @economy.group(
-        pass_context=True,
-    )
-    @commands.check(permissions.is_owner)
-    async def setting(self, ctx):
-        if ctx.invoked_subcommand is None:
-            await ctx.send("Please use a subcommand. (set)")
-
-    @setting.command(
-        aliases=["tax", "change_tax"],
-    )
-    @commands.check(permissions.is_owner)
-    async def set_tax(self, ctx, new_tax: float):
-        """Set a tax rate - Must be a decimal, such that `12%` would be `0.12`"""
-        global_var = self.bot.db.get_global_var("taxData")
-        if not global_var:
-            global_var = await self.bot.db.add_global_var("taxData", new_tax)
-
-        await ctx.send(f"Tax rate changed to {int(global_var.variableData * 100)}%.")
-
-    @setting.command(
-        aliases=["collector", "bastard"],
-    )
-    @commands.check(permissions.is_owner)
-    async def set_collector(
-        self, ctx, user: Optional[Union[discord.User, discord.Member]] = None
-    ):
-        """Sets everyone's least favorite person in the world."""
-        global_var = self.bot.db.get_global_var("taxData")
-        if not global_var:
-            # ?
-            global_var = await self.bot.db.add_global_var("taxData", 0, "None")
-
-        user = user.id if user else None  # type: ignore
-
-        global_var = await global_var.modify(variableData2=user)
-        if not global_var.variableData2:
-            await ctx.send(
-                "Tax collector cleared. User might still be taxed, but no one will collect it."
-            )
-
-            return
-
-        await ctx.send(
-            f"Tax collector set to {str(user)} (ID: {global_var.variableData2})"
-        )
+        await ctx.send("Done.")
+        await self.add_success_reaction()
+        return
 
     @commands.check(permissions.is_owner)
-    @commands.hybrid_command()
-    async def eval(self, ctx, *, body: str):
-        """Evaluates a code"""
+    @owner.command()
+    async def eval(self, ctx):
         await ctx.typing(ephemeral=True)
-
-        async def filter_eval(search: str, to_filter: str):
-            if to_filter in search:
-                return search.replace(to_filter, "[REDACTED]")
-            else:
-                return search
-
-        env = {
-            "self": self.bot,
-            "bot": self.bot,
-            "db": self.bot.db,
-            "ctx": ctx,
-            "channel": ctx.channel,
-            "author": ctx.author,
-            "guild": ctx.guild,
-            "message": ctx.message,
-            "_": self._last_result,
-        }
-        env.update(globals())
-        body = self.cleanup_code(body)
-        stdout = io.StringIO()
-        to_compile = f'async def func():\n{textwrap.indent(body, "  ")}'
-
-        embed = discord.Embed(
-            title="Evaluation",
-            colour=colors.prim,
+        await ctx.send(
+            "Please click the below button to evaluate your code.",
+            view=EvalView(ctx.author.id),
         )
 
-        try:
-            exec(to_compile, env)
-        except Exception as e:
-            capture_exception(e)
-            await self.add_fail_reaction()
-            embed.add_field(
-                name="Error",
-                value=f"```py\n{e.__class__.__name__}: {e}\n```",
-                inline=True,
-            )
-            try:
-                await ctx.send(embed=embed, ephemeral=True)
-            except Exception:
-                await ctx.send("Done and returned no output.")
-            return
+        # async def filter_eval(search: str, to_filter: str):
+        #     if to_filter in search:
+        #         return search.replace(to_filter, "[REDACTED]")
+        #     else:
+        #         return search
 
-        func = env["func"]
-        try:
-            with redirect_stdout(stdout):
-                ret = await func()
-        except Exception:
-            _value_p1 = await filter_eval(stdout.getvalue(), config.token)
-            value = await filter_eval(_value_p1, config.lunarapi.token)
-            embed.add_field(
-                name="Output",
-                value=f"```py\n{value}{traceback.format_exc()}\n```",
-                inline=True,
-            )
-            try:
-                await ctx.send(embed=embed, ephemeral=True)
-            except Exception:
-                await ctx.send("Done and returned no output.")
+        # env = {
+        #     "self": self.bot,
+        #     "bot": self.bot,
+        #     "db": self.bot.db,
+        #     "ctx": ctx,
+        #     "channel": ctx.channel,
+        #     "author": ctx.author,
+        #     "guild": ctx.guild,
+        #     "message": ctx.message,
+        #     "_": self._last_result,
+        # }
+        # env.update(globals())
+        # body = self.cleanup_code(body)
+        # stdout = io.StringIO()
+        # to_compile = f'async def func():\n{textwrap.indent(body, "  ")}'
 
-        else:
-            _value_p1 = await filter_eval(stdout.getvalue(), config.token)
-            value = await filter_eval(_value_p1, config.lunarapi.token)
-            await self.add_success_reaction()
-            if ret is None:
-                if value:
-                    embed.add_field(
-                        name="Result", value=f"```py\n{value}\n```", inline=True
-                    )
-                    try:
-                        await ctx.send(embed=embed, ephemeral=True)
-                    except Exception:
-                        await ctx.send("Done and returned no output.")
-            else:
-                self._last_result = ret
-                embed.add_field(
-                    name="Result", value=f"```py\n{value}{ret}\n```", inline=True
-                )
-                try:
-                    await ctx.send(embed=embed, ephemeral=True)
-                except Exception:
-                    await ctx.send("Done and returned no output.")
+        # embed = discord.Embed(title="Evaluation", colour=colors.prim)
+
+        # try:
+        #     exec(to_compile, env)
+        # except Exception as e:
+        #     capture_exception(e)
+        #     await self.add_fail_reaction()
+        #     embed.add_field(
+        #         name="Error",
+        #         value=f"```py\n{e.__class__.__name__}: {e}\n```",
+        #         inline=True,
+        #     )
+        #     try:
+        #         await ctx.send(embed=embed, ephemeral=True)
+        #     except Exception:
+        #         await ctx.send("Done and returned no output.")
+        #     return
+
+        # func = env["func"]
+        # try:
+        #     with redirect_stdout(stdout):
+        #         ret = await func()
+        # except Exception:
+        #     _value_p1 = await filter_eval(stdout.getvalue(), config.token)
+        #     value = await filter_eval(_value_p1, config.lunarapi.token)
+        #     embed.add_field(
+        #         name="Output",
+        #         value=f"```py\n{value}{traceback.format_exc()}\n```",
+        #         inline=True,
+        #     )
+        #     try:
+        #         await ctx.send(embed=embed, ephemeral=True)
+        #     except Exception:
+        #         await ctx.send("Done and returned no output.")
+
+        # else:
+        #     _value_p1 = await filter_eval(stdout.getvalue(), config.token)
+        #     value = await filter_eval(_value_p1, config.lunarapi.token)
+        #     await self.add_success_reaction()
+        #     if ret is None:
+        #         if value:
+        #             embed.add_field(
+        #                 name="Result", value=f"```py\n{value}\n```", inline=True
+        #             )
+        #             try:
+        #                 await ctx.send(embed=embed, ephemeral=True)
+        #             except Exception:
+        #                 await ctx.send("Done and returned no output.")
+        #     else:
+        #         self._last_result = ret
+        #         embed.add_field(
+        #             name="Result", value=f"```py\n{value}{ret}\n```", inline=True
+        #         )
+        #         try:
+        #             await ctx.send(embed=embed, ephemeral=True)
+        #         except Exception:
+        #             await ctx.send("Done and returned no output.")
 
     @commands.check(permissions.is_owner)
-    @commands.command()
+    @owner.command()
     async def spokemost(self, ctx):
-        """Shows the user who has spoken the most in the server"""
         # iterate through the servers channels and messages and collect the messages
         channel_messages = []
         what_channel_we_are_in = await ctx.send("Getting messages...")
@@ -960,36 +1187,17 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
         )
 
     @commands.check(permissions.is_owner)
-    @commands.command()
+    @owner.command()
     async def whatcanyousee(self, ctx):
-        """Displays what channels the bot can see"""
         channel_list = "".join(
             f"{channel.mention}\n" for channel in ctx.guild.text_channels
         )
 
         await ctx.send(f"Here are the channels I can see:\n{channel_list}")
 
-    @commands.command()
-    async def owner(self, ctx):
-        """Did you code me?"""
-        async with ctx.channel.typing():
-            with suppress(discord.NotFound):
-                await ctx.message.delete()
-            if ctx.author.id in self.config.owners:
-                return await ctx.send(
-                    f"Yes **{ctx.author.name}** \nYou Coded Me ", delete_after=delay
-                )
-            if ctx.author.id == 632753468896968764:
-                return await ctx.send(
-                    f"**{ctx.author.name}**Hi there :)", delete_after=delay
-                )
-            await ctx.send(f"no, heck off {ctx.author.name}", delete_after=delay)
-
-    @commands.command()
+    @owner.command()
     @commands.check(permissions.is_owner)
-    async def load(self, ctx, *names):
-        """Loads an extension."""
-
+    async def load(self, ctx, *, names: str):
         for name in names:
             try:
                 await self.bot.load_extension(f"Cogs.{name}")
@@ -1001,17 +1209,22 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
             await self.add_success_reaction()
             await ctx.send(f"Loaded extension **{name}.py**", delete_after=delay)
 
-    @commands.command()
+    @owner.command()
+    @commands.check(permissions.is_owner)
+    async def apidel(self, ctx):
+        channel = self.bot.get_channel(932548255202545664)
+        msg = await channel.fetch_message(932822132612808725)
+        await ctx.send(msg.content)
+
+    @owner.command()
     @commands.check(permissions.is_owner)
     async def sync(self, ctx):
         arg = ctx.guild.id
         await ctx.invoke(self.bot.get_command("jsk sync"), command_string=arg)
 
-    @commands.command()
+    @owner.command()
     @commands.check(permissions.is_owner)
-    async def unload(self, ctx, *names):
-        """Unloads an extension."""
-
+    async def unload(self, ctx, *, names: str):
         for name in names:
             try:
                 await self.bot.unload_extension(f"Cogs.{name}")
@@ -1023,20 +1236,17 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
                 delete_after=delay,
             )
 
-    @commands.command()
+    @owner.command()
     @commands.check(permissions.is_owner)
-    async def reload(self, ctx, *names):
-        """Reloads an extension."""
-
+    async def reload(self, ctx, *, names: str):
+        names = names.split(" ")
         for name in names:
             try:
                 await self.bot.reload_extension(f"Cogs.{name}")
             except Exception as e:
                 capture_exception(e)
                 await ctx.send(default.traceback_maker(e))
-                await self.add_fail_reaction()
                 return
-            await self.add_success_reaction()
         if len(names) == 1:
             await ctx.send(
                 f"Reloaded extension **{name}.py** {ctx.author.mention}",
@@ -1049,19 +1259,15 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
                 delete_after=delay,
             )
 
-    @commands.command()
+    @owner.command()
     @commands.check(permissions.is_owner)
     async def loadall(self, ctx):
-        """Loads all extensions"""
-
         error_collection = []
         for file in os.listdir("Cogs"):
             if file.endswith(".py"):
                 name = file[:-3]
                 try:
-                    await self.bot.load_extension(
-                        f"Cogs.{name}",
-                    )
+                    await self.bot.load_extension(f"Cogs.{name}")
                 except Exception as e:
                     capture_exception(e)
                     error_collection.append(
@@ -1082,19 +1288,15 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
             delete_after=delay,
         )
 
-    @commands.command()
+    @owner.command()
     @commands.check(permissions.is_owner)
     async def reloadall(self, ctx):
-        """Reloads all extensions."""
-
         error_collection = []
         for file in os.listdir("Cogs"):
             if file.endswith(".py"):
                 name = file[:-3]
                 try:
-                    await self.bot.reload_extension(
-                        f"Cogs.{name}",
-                    )
+                    await self.bot.reload_extension(f"Cogs.{name}")
                 except Exception as e:
                     capture_exception(e)
                     error_collection.append(
@@ -1115,11 +1317,10 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
             delete_after=delay,
         )
 
-    @commands.command()
+    @owner.command()
     @commands.check(permissions.is_owner)
-    async def reloadutils(self, ctx, *names):
-        """Reloads a utils module."""
-
+    async def reloadutils(self, ctx, *, names: str):
+        names = names.split(" ")
         for name in names:
             try:
                 module_name = importlib.import_module(f"utils.{name}")
@@ -1142,97 +1343,122 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
                 delete_after=delay,
             )
 
-    # make a command to pull updates from git
-    @commands.command()
-    @commands.check(permissions.is_owner)
-    async def pull(self, ctx):
-        """Pulls the latest updates from git."""
+    # @owner.command()
+    # @commands.check(permissions.is_mcstaff)
+    # async def afreboot(self, ctx):
+    #     with suppress(Exception):
+    #         bruh = await ctx.send("Rebooting AnimeForestMC...")
+    #         await asyncio.create_subprocess_shell(
+    #             "(cd /home/ubuntu/LunarGames/AnimeForestMC/ ; sh restart.sh)"
+    #         )
+    #     await bruh.edit(content="Server rebooted.")
 
-        with suppress(Exception):
-            bruh = await ctx.send("Pulling updates...")
-            await asyncio.create_subprocess_shell("git pull")
-        # get the output of the subprocess, get the github stats of the commit
-        output = subprocess.check_output(["git", "log", "-1"]).decode("utf-8")
-        # get total deletions
-        deletions = subprocess.check_output(["git", "diff", "--shortstat"]).decode(
-            "utf-8"
-        )
-        # get total additions
-        additions = subprocess.check_output(
-            ["git", "diff", "--shortstat", "--cached"]
-        ).decode("utf-8")
-        # check if its already up to date
-        if "Already up to date." in output:
-            await bruh.edit("Already up-to-date.")  # this doesnt even work lol
+    @owner.command()
+    @commands.check(permissions.is_owner)
+    async def apirm(self, ctx, *, rmcodes: str):
+        rmcodes = rmcodes.split(" ")
+        apiUrlReg = "https://api.lunardev.group/"
+        imgId = (elem.replace(apiUrlReg, "") for elem in rmcodes)
+        for rmcode in imgId:
+            logger.info(
+                f"{formatColor('[API]', 'yellow')} Removing {rmcode} from the API!"
+            )
+            # check if the rmcode is the hentai file
+            os.system(
+                f"cd ~/LunarDev/lunar-api/assets && sudo rm -rf hentai/{rmcode}")
+        if len(rmcodes) == 1:
+            await ctx.send(f"Removed `{rmcode}` from the API.", delete_after=delay)
             return
-        await bruh.edit(
-            content=f"Updates Pulled:\n{output}\n\n{deletions}\n{additions}"
+        await ctx.send(
+            f"removed the following\n"
+            + "\n".join(f"**{rmcode}**" for rmcode in rmcodes),
+            delete_after=delay,
         )
 
-    @commands.command()
+    @owner.command()
     @commands.check(permissions.is_owner)
-    async def debug(self, ctx, *, arg):
-        await ctx.invoke(self.bot.get_command("jsk debug"), command_string=arg)
+    async def apiadd(self, ctx):
+        for attachment in ctx.message.attachments:
+            attachment.save(attachment.filename)
 
-    @commands.command()
+    @owner.command()
     @commands.check(permissions.is_owner)
-    async def source(self, ctx, arg):
-        await ctx.invoke(self.bot.get_command("jsk source"), command_name=arg)
+    async def restart(self, ctx, *, container: str):
+        await ctx.send(f"Restarting container: {container}")
+        async with aiohttp.ClientSession(
+            headers={"Authorization": f"Bearer {self.config.lunarapi.tokenNew}"}
+        ) as session:
+            async with session.get(
+                f"https://api.lunardev.group/admin/restart?password={self.config.lunarapi.adminPass}&container={container}"
+            ) as resp:
+                if resp.status == 200:
+                    return
 
-    @commands.command()
+    @owner.command()
     @commands.check(permissions.is_owner)
-    async def restart(self, ctx):
-        await ctx.send("Restarting all services...")
-        os.system("cd ../ && ./restart.sh")
-
-    @commands.command()
-    @commands.check(permissions.is_owner)
-    async def crash_debug(self, ctx):
-        # cause divide by zero error
-        await ctx.send("Crashing the bot for debug puroposes...")
-
-    @commands.command()
-    @commands.check(permissions.is_owner)
-    async def dm(self, ctx, user: discord.User, *, message):
-        """DMs the user of your choice.
-        If you somehow found out about this command, it is owner ONLY
-        you cannot use it."""
+    async def dm(self, ctx, user: discord.User, *, message: str):
         if user.bot:
             return await ctx.send(
                 "I can't DM bots.\nI mean I can, I just don't want to..."
             )
         with suppress(Exception):
             await ctx.message.delete()
-        embed2 = discord.Embed(title=f"New message to {user}", description=message)
-        embed2.set_footer(
-            text=f"tp!dm {user.id}",
-            icon_url=ctx.author.avatar,
-        )
-        embed = discord.Embed(
+        e = EmbedMaker(
             title=f"New message From {ctx.author.name} | {self.bot.user.name} DEV",
             description=message,
+            footer="To contact me, just DM the bot",
         )
-        embed.set_footer(
-            text="To contact me, just DM the bot", icon_url=ctx.author.avatar
+        e2 = EmbedMaker(
+            title=f"New message to {user}",
+            description=message,
+            footer=f"tp!dm {user.id}",
         )
-
         # check if the command was ran in the log channel
         log_dm = self.bot.get_channel(986079167944749057)
         if ctx.channel.id == log_dm.id:
             try:
-                await user.send(embed=embed)
-                await log_dm.send(embed=embed2)
+                await user.send(embed=e)
+                await log_dm.send(embed=e2)
             except Exception:
                 await ctx.send("Cannot DM user.")
                 return
         else:
             try:
-                await user.send(embed=embed)
-                await log_dm.send(embed=embed2)
-            except Exception:
-                await ctx.send("Cannot dm user.")
+                await user.send(embed=e)
+                await log_dm.send(embed=e2)
+            except Exception as e:
+                await ctx.send(f"Cannot dm user. | {e}")
 
-    @commands.group(case_insensitive=True)
+    @commands.command()
+    @commands.check(permissions.is_owner)
+    async def traceback(self, ctx):
+        if not ctx.bot.traceback:
+            await ctx.send("No exception has occurred yet.")
+            return
+        public = True
+
+        def paginate(text: str):
+            """Simple generator that paginates text."""
+            last = 0
+            pages = []
+            for curr in range(len(text)):
+                if curr % 1980 == 0:
+                    pages.append(text[last:curr])
+                    last = curr
+                    appd_index = curr
+            if appd_index != len(text) - 1:
+                pages.append(text[last:curr])
+            return list(filter(lambda a: a != "", pages))
+
+        destination = ctx.channel if public else ctx.author
+        for page in paginate(ctx.bot.traceback):
+            embed = discord.Embed(
+                title="Error Traceback", description=f"```py\n{page}```"
+            )
+            await destination.send(embed=embed)
+
+    @commands.hybrid_group(case_insensitive=True)
+    @discord.app_commands.guilds(OS)
     @commands.check(permissions.is_owner)
     async def change(self, ctx):
 
@@ -1242,7 +1468,6 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
     @change.command(name="username")
     @commands.check(permissions.is_owner)
     async def change_username(self, ctx, *, name: str):
-        """Change username."""
         try:
             await self.bot.user.edit(username=name)
             await ctx.send(
@@ -1255,7 +1480,6 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
     @change.command(name="nickname")
     @commands.check(permissions.is_owner)
     async def change_nickname(self, ctx, *, name: str = None):
-        """Change nickname."""
         try:
             await ctx.guild.me.edit(nick=name)
             if name:
@@ -1271,13 +1495,12 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
     @change.command(name="avatar")
     @commands.check(permissions.is_owner)
     async def change_avatar_url(self, ctx, url: str = None):
-        """Change avatar."""
         if url is None and len(ctx.message.attachments) == 1:
             url = ctx.message.attachments[0].url
         else:
             url = url.strip("<>") if url else None
         try:
-            bio = await http.get(url, res_method="read")
+            bio = await httpx.get(url, res_method="read")
             await self.bot.user.edit(avatar=bio)
             await ctx.send(
                 f"Successfully changed the avatar. Currently using:\n{url}",

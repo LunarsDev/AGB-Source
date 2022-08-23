@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Optional, Union
 
 import discord
 from discord.ext import commands
-from index import Website, colors, config, delay
+from index import Website, colors, config, delay, EmbedMaker
 from sentry_sdk import capture_exception
 from utils import checks, default, imports, permissions
 
@@ -316,7 +316,7 @@ class Moderator(commands.Cog, name="mod"):
         if await permissions.check_priv(ctx, member):
             return
         await member.kick(reason=default.responsible(ctx.author, reason))
-        await ctx.send(default.actionmessage("kicked"))
+        await ctx.send(embed=EmbedMaker(description=default.actionmessage("kicked")))
 
     @commands.hybrid_command()
     @commands.guild_only()
@@ -1346,6 +1346,19 @@ class Moderator(commands.Cog, name="mod"):
             ephemeral=True,
         )
 
+    # !!!!Dont uncomment!!!
+    # !!!!!
+    # This is not only blacklisted users, this is every user in the blacklist table. This will be fixed soon
+    #
+    #
+    # @commands.guild_only()
+    # @permissions.has_permissions(ban_members=True)
+    # @commands.bot_has_permissions(embed_links=True, ban_members=True)
+    # @permissions.dynamic_ownerbypass_cooldown(1, 5, commands.BucketType.user)
+    # async def banblacklistedusers(self, ctx):
+    #     """Ban all blacklisted users from the server"""
+    #     user = self.bot.db.fetch_blacklists()
+
     @commands.guild_only()
     @permissions.has_permissions(manage_roles=True)
     @commands.bot_has_permissions(embed_links=True, manage_roles=True)
@@ -1398,7 +1411,7 @@ class Moderator(commands.Cog, name="mod"):
         else:
             await ctx.send(
                 "Look at a permission calculator for more info on permissions: https://finitereality.github.io/permissions-calculator/\nWhen you get the permissions that you want, copy the number on the very top of the page. Should look something like this",
-                file=discord.File("permissions.png"),
+                file=discord.File("imgs/permissions.png"),
             )
         hex = int(hex, 16) if hex is not None else 0
         await ctx.guild.create_role(
@@ -1445,7 +1458,7 @@ class Moderator(commands.Cog, name="mod"):
         self,
         ctx,
         role: discord.Role,
-        name: str,
+        name: str = None,
         permissions: str or int = None,
         hoist: bool = None,
         mentionable: bool = None,
@@ -1457,15 +1470,18 @@ class Moderator(commands.Cog, name="mod"):
         **Hint** True and False are case sensitive.
         Args:
             role (str): the role to edit
-            name (str): the new name for the role
-            permissions (int, optional): permission value to give the role. Defaults to None.
-            hoist (bool, optional): set the role to be hoisted. Defaults to False.
-            mentionable (bool, optional): set the role to be mentionable. Defaults to False.
-            hex (int, optional): color hex to set the role. Defaults to None.
+            name (str, optional): the new name for the role. Defaults to the current name.
+            permissions (int, optional): permission value to give the role. Defaults to the roles current permissions.
+            hoist (bool, optional): set the role to be hoisted. Defaults to the roles current hoist value.
+            mentionable (bool, optional): set the role to be mentionable. Defaults to the roles current mentionable value.
+            hex (int, optional): color hex to set the role. Defaults to roles current hex value.
         """
         if role is None:
             await ctx.send(":x: Specify a role that you want me to edit!")
             return
+
+        if name is None:
+            name = role.name
 
         if hex is not None:
             with contextlib.suppress(Exception):
@@ -1486,7 +1502,7 @@ class Moderator(commands.Cog, name="mod"):
                 except Exception:
                     await ctx.send(
                         "Look at a permission calculator for more info on permissions: https://finitereality.github.io/permissions-calculator/\nWhen you get the permissions that you want, copy the number on the very top of the page. Should look something like this",
-                        file=discord.File("permissions.png"),
+                        file=discord.File("imgs/permissions.png"),
                     )
                     return
         hoist = role.hoist if hoist is None else hoist
@@ -1659,10 +1675,10 @@ class Moderator(commands.Cog, name="mod"):
         else:
             time = int(time)
         if time > 2419200:
-            await ctx.send(
-                "You can't mute someone for more than 28 days! Please use a shorter time.",
-                ephemeral=True,
-            )
+            await EmbedMaker(
+                description="You can't mute someone for more than 28 days! Please use a shorter time.",
+                footer="mc.lunardev.group 1.19.2",
+            ).send(ctx, ephemeral=True)
             return
         if await permissions.check_priv(ctx, member=member):
             return
@@ -1671,32 +1687,33 @@ class Moderator(commands.Cog, name="mod"):
         except Exception as e:
             capture_exception(e)
             # say that the bot needs moderate_members permissions
-            await ctx.send(
-                f"I couldn't mute {member.mention}! Please make sure I have the `Timeout Members` permission!\nHere's the error: {e}",
-                ephemeral=True,
-            )
+            await EmbedMaker(
+                title="Error",
+                description="I need the `moderate_members` permission to do this.",
+                footer="mc.lunardev.group 1.19.2",
+            ).send(ctx, ephemeral=True)
             return
 
         if time > 86400:
-            await ctx.send(
-                f"{member.mention} has been muted for {time // 86400} days.",
-                ephemeral=ephemeral,
-            )
+            await EmbedMaker(
+                description=f"{member.mention} has been muted for {time // 86400} days.",
+                footer="mc.lunardev.group 1.19.2",
+            ).send(ctx, ephemeral=ephemeral)
         elif time > 3600:
-            await ctx.send(
-                f"{member.mention} has been muted for {time // 3600} hours.",
-                ephemeral=ephemeral,
-            )
+            await EmbedMaker(
+                description=f"{member.mention} has been muted for {time // 3600} hours.",
+                footer="mc.lunardev.group 1.19.2",
+            ).send(ctx, ephemeral=ephemeral)
         elif time > 60:
-            await ctx.send(
-                f"{member.mention} has been muted for {time // 60} minutes.",
-                ephemeral=ephemeral,
-            )
+            await EmbedMaker(
+                description=f"{member.mention} has been muted for {time // 60} minutes.",
+                footer="mc.lunardev.group 1.19.2",
+            ).send(ctx, ephemeral=ephemeral)
         else:
-            await ctx.send(
-                f"{member.mention} has been muted for {time} seconds.",
-                ephemeral=ephemeral,
-            )
+            await EmbedMaker(
+                description=f"{member.mention} has been muted for {time} seconds.",
+                footer="mc.lunardev.group 1.19.2",
+            ).send(ctx, ephemeral=ephemeral)
 
     @commands.hybrid_command()
     @permissions.slash_has_permissions(moderate_members=True)
@@ -1901,7 +1918,7 @@ class Moderator(commands.Cog, name="mod"):
                 f"Successfully removed {deleted} messages.", delete_after=delay
             )
         else:
-            await ctx.send(to_send, delete_after=delay)
+            await ctx.send(to_send, delete_after=3)
 
     @purge.command()
     @commands.guild_only()

@@ -77,7 +77,7 @@ class FormattedHelp(commands.HelpCommand):
             name="Usage", value=self.get_command_signature(command).replace("*", "")
         )
         e.set_footer(
-            text=f"{self.context.bot.user.name} by Motzumoto, iPlay G, and WinterFe"
+            text=f"mc.lunardev.group 1.19.2 | {self.context.bot.user.name} by Motzumoto, iPlay G, WinterFe, and Soheab"
         )
         await self.get_destination().send(embed=e)
 
@@ -89,7 +89,7 @@ class FormattedHelp(commands.HelpCommand):
             color=colors.prim,
         )
         e.set_footer(
-            text=f"{self.context.bot.user.name} by Motzumoto, iPlay G, and WinterFe"
+            text=f"mc.lunardev.group 1.19.2 | {self.context.bot.user.name} by Motzumoto, iPlay G, WinterFe, and Soheab"
         )
         embeds = [e]
         for command in group.commands:
@@ -102,7 +102,7 @@ class FormattedHelp(commands.HelpCommand):
                 name="Usage", value=self.get_command_signature(command).replace("*", "")
             )
             e.set_footer(
-                text=f"{self.context.bot.user.name} by Motzumoto, iPlay G, and WinterFe"
+                text=f"mc.lunardev.group 1.19.2 | {self.context.bot.user.name} by Motzumoto, iPlay G, WinterFe, and Soheab"
             )
             embeds.append(e)
         menu = menus.MenuPages(source=HelpMenu(embeds, per_page=1))
@@ -116,7 +116,7 @@ class FormattedHelp(commands.HelpCommand):
             color=colors.prim,
         )
         e.set_footer(
-            text=f"{self.context.bot.user.name} by Motzumoto, iPlay G, and WinterFe"
+            text=f"mc.lunardev.group 1.19.2 | {self.context.bot.user.name} by Motzumoto, iPlay G, WinterFe, and Soheab"
         )
         embeds = [e]
         for command in cog.walk_commands():
@@ -134,7 +134,7 @@ class FormattedHelp(commands.HelpCommand):
                 )
                 e.add_field(name="Support Server", value=f"[Click Me]({config.Server})")
             e.set_footer(
-                text=f"{self.context.bot.user.name} by Motzumoto, iPlay G, and WinterFe"
+                text=f"mc.lunardev.group 1.19.2 | {self.context.bot.user.name} by Motzumoto, iPlay G, WinterFe, and Soheab"
             )
             embeds.append(e)
         menu = menus.MenuPages(source=HelpMenu(embeds, per_page=1))
@@ -163,10 +163,10 @@ class FormattedHelp(commands.HelpCommand):
             info_q = [c.name for c in info_commands if not c.hidden]
             info_names = "".join(f"`{name}`, " for name in info_q)
 
-            economy_cog = self.context.bot.get_cog("Help")
-            economy_commands = economy_cog.get_commands()
-            economy_q = [c.name for c in economy_commands if not c.hidden]
-            economy_names = "".join(f"`{name}`, " for name in economy_q)
+            # economy_cog = self.context.bot.get_cog("economy")
+            # economy_commands = economy_cog.get_commands()
+            # economy_q = [c.name for c in economy_commands if not c.hidden]
+            # economy_names = "".join(f"`{name}`, " for name in economy_q)
 
             fun_cog = self.context.bot.get_cog("fun")
             fun_commands = fun_cog.get_commands()
@@ -183,14 +183,15 @@ class FormattedHelp(commands.HelpCommand):
             mod_q = [c.name for c in mod_commands if not c.hidden]
             mod_names = "".join(f"`{name}`, " for name in mod_q)
 
-            music_cog = self.context.bot.get_cog("music")
-            music_commands = music_cog.get_commands()
-            music_q = [c.name for c in music_commands if not c.hidden]
-            music_names = "".join(f"`{name}`, " for name in music_q)
+            # REMOVED
+            # music_cog = self.context.bot.get_cog("music")
+            # music_commands = music_cog.get_commands()
+            # music_q = [c.name for c in music_commands if not c.hidden]
+            # music_names = "".join(f"`{name}`, " for name in music_q)
 
             if self.context.channel.is_nsfw():
-                description = f"""For help on individual commands, use `tp!help <command>`.\n\n**{random.choice(emojis.rainbow_emojis)} {info_cog.qualified_name.capitalize()}**\n{info_names}\n\n**{random.choice(emojis.rainbow_emojis)} {economy_cog.qualified_name.capitalize()}**\n{economy_names}\n\n**{random.choice(emojis.rainbow_emojis)} {fun_cog.qualified_name.capitalize()}**\n{fun_names}\n\n**{random.choice(emojis.rainbow_emojis)} {guild_cog.qualified_name.capitalize()}**
-				{guild_names}\n\n**{random.choice(emojis.rainbow_emojis)} {mod_cog.qualified_name.capitalize()}**\n{mod_names}\n\n{random.choice(emojis.rainbow_emojis)} **{music_cog.qualified_name.capitalize()}**\n{music_names}\n\n{random.choice(emojis.rainbow_emojis)} **{nsfw_cog.qualified_name.capitalize()}**\n{nsfw_names}\nalso, there are nsfw slash commands. make sure AGB has permission to register them in your server."""
+                description = f"""For help on individual commands, use `tp!help <command>`.\n\n**{random.choice(emojis.rainbow_emojis)} {info_cog.qualified_name.capitalize()}**\n{info_names}\n\n**{random.choice(emojis.rainbow_emojis)} {fun_cog.qualified_name.capitalize()}**\n{fun_names}\n\n**{random.choice(emojis.rainbow_emojis)} {guild_cog.qualified_name.capitalize()}**
+				{guild_names}\n\n**{random.choice(emojis.rainbow_emojis)} {mod_cog.qualified_name.capitalize()}**\n{mod_names}\n\n{random.choice(emojis.rainbow_emojis)} **{nsfw_cog.qualified_name.capitalize()}**\n{nsfw_names}\nalso, there are nsfw slash commands. make sure AGB has permission to register them in your server."""
 
                 embed = discord.Embed(
                     color=colors.prim,
@@ -200,7 +201,7 @@ class FormattedHelp(commands.HelpCommand):
                     text="If there is anything that you would like to see / changed, run 𝐭𝐩!𝐬𝐮𝐠𝐠𝐞𝐬𝐭 with your suggestion!\nAlso check out our server host!"
                 )
             else:
-                description = f"""**{random.choice(emojis.rainbow_emojis)} {info_cog.qualified_name.capitalize()}**\n{info_names}\n\n**{random.choice(emojis.rainbow_emojis)} {economy_cog.qualified_name.capitalize()}**\n{economy_names}\n\n**{random.choice(emojis.rainbow_emojis)} {fun_cog.qualified_name.capitalize()}**\n{fun_names}\n\n**{random.choice(emojis.rainbow_emojis)} {guild_cog.qualified_name.capitalize()}**\n{guild_names}\n\n**{random.choice(emojis.rainbow_emojis)} {mod_cog.qualified_name.capitalize()}**\n{mod_names}\n\n{random.choice(emojis.rainbow_emojis)}**{music_cog.qualified_name.capitalize()}**\n{music_names}\n\n{random.choice(emojis.rainbow_emojis)}**{nsfw_cog.qualified_name.capitalize()}**\nNsfw commands are hidden. To see them run tp!help in any of these NSFW channels.\n{nsfw_channels}"""
+                description = f"""**{random.choice(emojis.rainbow_emojis)} {info_cog.qualified_name.capitalize()}**\n{info_names}\n\n**{random.choice(emojis.rainbow_emojis)} {fun_cog.qualified_name.capitalize()}**\n{fun_names}\n\n**{random.choice(emojis.rainbow_emojis)} {guild_cog.qualified_name.capitalize()}**\n{guild_names}\n\n**{random.choice(emojis.rainbow_emojis)} {mod_cog.qualified_name.capitalize()}**\n{mod_names}\n\n{random.choice(emojis.rainbow_emojis)} **{nsfw_cog.qualified_name.capitalize()}**\nNsfw commands are hidden. To see them run tp!help in any of these NSFW channels.\n{nsfw_channels}"""
 
                 embed = discord.Embed(
                     color=colors.prim,
@@ -247,7 +248,7 @@ async def setup(bot: Bot) -> None:
 # from discord.ext import commands
 # from typing import List
 
-# from index import EMBED_COLOUR, Vote, Server, Invite, emojis
+# from index import EmbedMaker, EmbedMaker, EMBED_COLOUR, Vote, Server, Invite, emojis
 # from discord.utils import get
 
 # EMOJIS = {

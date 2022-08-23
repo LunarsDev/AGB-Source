@@ -79,6 +79,8 @@ class Badges(TypedDict):
 class Blacklist(TypedDict):
     userid: Any
     blacklisted: Any
+    blacklistedtill: Any
+    reason: str
 
 
 class GuildBlacklist(TypedDict):

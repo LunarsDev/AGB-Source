@@ -5,18 +5,17 @@ import datetime
 import json
 import os
 import pathlib
-import random
 from typing import TYPE_CHECKING, Annotated, List, Optional, Union
 
-import aiohttp
 import discord
 import psutil
 import requests
 from discord.ext import commands
 from discord.ui import Button, View
-from index import colors, config
+from index import EmbedMaker, colors, config
 from sentry_sdk import capture_exception
 from utils import default, imports, permissions
+from utils.common_filters import filter_mass_mentions
 
 
 def list_items_in_english(l: List[str], oxford_comma: bool = True) -> str:
@@ -240,22 +239,21 @@ class Information(commands.Cog, name="info"):
         Args:
             ephemeral (optional): make the command visible to you or others. Defaults to False.
         """
-        embed = discord.Embed(color=colors.prim)
-        embed.set_author(
-            name=self.bot.user.name,
-            icon_url=self.bot.user.avatar,
-        )
+        await ctx.typing(ephemeral=ephemeral)
         try:
-            embed.add_field(
-                name="Ping", value=f"{round(self.bot.latency * 1000)}ms", inline=True
-            )
+            await EmbedMaker(
+                title="Ping",
+                description=f"{round(self.bot.latency * 1000)}ms",
+                author=(ctx.author.name, ctx.author.avatar),
+                thumbnail=self.bot.user.avatar,
+            ).send(ctx, ephemeral=ephemeral)
         except OverflowError:
-            embed.add_field(
-                name="Ping", value="Ping cannot be calculated right now.", inline=True
-            )
-
-        embed.set_thumbnail(url=ctx.author.avatar)
-        await ctx.send(embed=embed, ephemeral=ephemeral)
+            await EmbedMaker(
+                title="Ping",
+                description="Ping cannot be calculated right now.",
+                author=(ctx.author.name, ctx.author.avatar),
+                thumbnail=self.bot.user.avatar,
+            ).send(ctx, ephemeral=ephemeral)
 
     @commands.hybrid_command()
     @commands.bot_has_permissions(embed_links=True)
@@ -325,75 +323,6 @@ class Information(commands.Cog, name="info"):
                     result.append(f"{value}{name}")
             return " ".join(result[:granularity])
 
-        async def lunar_api_stats(self):
-            await ctx.channel.typing()
-            await fetching.edit(content="Fetching Lunar API stats...")
-            async with aiohttp.ClientSession(headers=self.lunar_headers) as s:
-                try:
-                    async with s.get("https://lunardev.group/api/ping") as r:
-                        j = await r.json()
-                        seconds = j["uptime"]
-
-                        # str(await lunar_api_stats(self)).partition(".")
-
-                        if r.status == 200:
-                            return display_time(int(str(seconds).partition(".")[0]), 4)
-                        else:
-                            return "❌ API Error"
-                except Exception as e:
-                    capture_exception(e)
-                    return "❌ API Error"
-
-        async def lunar_api_cores(self):
-            await ctx.channel.typing()
-            await fetching.edit(content="Fetching Lunar system cores...")
-            async with aiohttp.ClientSession(headers=self.lunar_headers) as s:
-                try:
-                    async with s.get("https://lunardev.group/api/ping") as r:
-                        j = await r.json()
-                        cores = j["system"]["cores"]
-
-                        # str(await lunar_api_stats(self)).partition(".")
-
-                        return cores if r.status == 200 else "❌ API Error"
-                except Exception as e:
-                    capture_exception(e)
-                    return "❌ API Error"
-
-        async def lunar_api_files(self):
-            await ctx.channel.typing()
-            await fetching.edit(content="Fetching Lunar API files...")
-            async with aiohttp.ClientSession(headers=self.lunar_headers) as s:
-                try:
-                    async with s.get("https://lunardev.group/api/ping") as r:
-                        j = await r.json()
-                        files = j["images"]["total"]
-
-                        # str(await lunar_api_stats(self)).partition(".")
-
-                        return f"{int(files):,}" if r.status == 200 else "❌ API Error"
-                except Exception as e:
-                    capture_exception(e)
-                    return "❌ API Error"
-
-        async def lunar_system_uptime(self):
-            await ctx.channel.typing()
-            await fetching.edit(content="Fetching Lunar system uptime...")
-            async with aiohttp.ClientSession(headers=self.lunar_headers) as s:
-                try:
-                    async with s.get("https://lunardev.group/api/ping") as r:
-                        j = await r.json()
-                        uptime = j["system"]["uptime"]
-
-                        # str(await lunar_api_stats(self)).partition(".")
-
-                        if r.status == 200:
-                            return display_time(int(str(uptime).partition(".")[0]), 4)
-                        else:
-                            return "❌ API Error"
-                except Exception as e:
-                    capture_exception(e)
-                    return "❌ API Error"
 
         async def line_count(self):
             await ctx.channel.typing()
@@ -427,12 +356,16 @@ class Information(commands.Cog, name="info"):
             return f"{total:,} lines, {file_amount:,} files"
 
         if len(chunked) == len(self.bot.guilds):
-            all_chunked = "**All servers are cached!**"
+            all_chunked = "All servers are cached!"
         else:
             all_chunked = (
                 f"**{len(chunked)}** / **{len(self.bot.guilds)}** servers are cached"
             )
-
+        if self.bot.shard_count == 1:
+            shards = "1 shard"
+        else:
+            shards = f"{self.bot.shard_count:,} shards"
+        made = discord.utils.format_dt(self.bot.user.created_at, style="R")
         cpu = psutil.cpu_percent()
         cpu_box = default.draw_box(round(cpu), ":blue_square:", ":black_large_square:")
         ramlol = round(ramUsage) // 10
@@ -443,10 +376,9 @@ class Information(commands.Cog, name="info"):
         {ram_box}
         `CPU Usage: {cpu}%`
         {cpu_box}"""
-        API_UPTIME = await lunar_api_stats(self)
-        BOT_INFO = f"""{all_chunked}\nLatency: {round(self.bot.latency * 1000, 2)}ms\nLoaded CMDs: {len([x.name for x in self.bot.commands])} and {len(amount_of_app_cmds)} slash commands\nMade: <t:1592620263:R>\n{await line_count(self)}\nUptime: {default.uptime(start_time=self.bot.launch_time)}"""
-        API_INFO = f"""API Uptime: {API_UPTIME}\nCPU Cores: {await lunar_api_cores(self)}\nTotal Images: {await lunar_api_files(self)}"""
-        SYS_INFO = f"""System Uptime: {await lunar_system_uptime(self)}\nCPU Cores: {await lunar_api_cores(self)}"""
+        BOT_INFO = f"""{all_chunked}\nLatency: {round(self.bot.latency * 1000, 2)}ms\nShard count: {shards}\nLoaded CMDs: {len([x.name for x in self.bot.commands])} and {len(amount_of_app_cmds)} slash commands\nMade: {made}\n{await line_count(self)}\nOnline for: {default.uptime(self.bot.launch_time)}"""
+        # API_INFO = f"""API Uptime: {API_UPTIME}\nCPU Cores: {await lunar_api_cores(self)}\nTotal Images: {await lunar_api_files(self)}"""
+        # SYS_INFO = f"""System Uptime: {await lunar_system_uptime(self)}\nCPU Cores: {await lunar_api_cores(self)}"""
 
         embed = discord.Embed(
             color=colors.prim,
@@ -463,8 +395,8 @@ class Information(commands.Cog, name="info"):
         )
 
         embed.add_field(name="Bot Information", value=BOT_INFO, inline=False)
-        embed.add_field(name="API Information", value=API_INFO, inline=False)
-        embed.add_field(name="System Information", value=SYS_INFO, inline=False)
+        # embed.add_field(name="API Information", value=API_INFO, inline=False)
+        # embed.add_field(name="System Information", value=SYS_INFO, inline=False)
         embed.set_image(
             url="https://media.discordapp.net/attachments/940897271120273428/954507474394808451/group.gif"
         )
@@ -527,44 +459,40 @@ class Information(commands.Cog, name="info"):
     @commands.bot_has_permissions(embed_links=True)
     async def say(self, ctx, *, message: str):
         """Speak through the bot uwu"""
-        # if message.
         with contextlib.suppress(Exception):
             await ctx.message.delete()
-        await ctx.send(message)
-        if random.randint(1, 5) == 1:
-            await ctx.send("You can also say an embed with `/embed_say`!")
+        await ctx.send(filter_mass_mentions(message))
+        # if random.seed(1, 5) == 1:
+        #     await ctx.send(
+        #         "You can also say an embed with `/embed_say`!",
+        #         files=[
+        #             discord.File("imgs/withimage.gif"),
+        #             discord.File("imgs/withoutimage.gif"),
+        #         ],
+        #     )
 
     @permissions.dynamic_ownerbypass_cooldown(1, 5, commands.BucketType.user)
     @commands.hybrid_command()
     @commands.bot_has_permissions(embed_links=True)
-    async def embed_say(
-        self,
-        ctx,
-        *,
-        message: str,
-        description: str = None,
-        title: str = None,
-        footer: str = None,
-        image: str = None,
+    async def embedsay(
+        self, ctx, title, desc: str, colorhex: str = None, thumbnail=None
     ):
-        """Speak through the bot with an embed. MUST BE USED AS A SLASH COMMAND TO EDIT FOOTER/TITLE/IMAGE"""
+        """Embedded say command
+        To make a new line, type `\\n` in the description."""
+        if "\\n" in desc:
+            desc = desc.replace("\\n", "\n")
+        if "\\n " in desc:
+            desc = desc.replace("\\n ", "\n")
+        colorhex = int(colorhex, 16) if colorhex is not None else 0
+        if colorhex is None:
+            colorhex = colors.prim
+        if thumbnail is None:
+            thumbnail = "https://cdn.discordapp.com/icons/755722576445046806/822bafdc8285f1729af731b4d320c5e5.png?size=1024"
         with contextlib.suppress(Exception):
             await ctx.message.delete()
-
-        title_no_edit = "Lunar Development Echo"
-        if footer is None:
-            footer = f"Sent at {ctx.message.created_at.strftime('%H:%M:%S')}"
-        if image is None:
-            image = "https://cdn.discordapp.com/icons/755722576445046806/822bafdc8285f1729af731b4d320c5e5.png?size=1024"
-        if description is None:
-            description = "No Text Provided :("
-        embed = discord.Embed(
-            title=title_no_edit, description=description, color=colors.prim
-        )
-        embed.add_field(name=title, value=message)
-        embed.set_thumbnail(url=image)
-        embed.set_footer(text=footer)
-        await ctx.send(embed=embed)
+        await EmbedMaker(
+            title=title, description=desc, color=colorhex, thumbnail=thumbnail
+        ).send(ctx)
 
     @permissions.dynamic_ownerbypass_cooldown(1, 5, commands.BucketType.user)
     @commands.command()
@@ -679,10 +607,7 @@ class Information(commands.Cog, name="info"):
     async def bio(self, ctx, *, bio: Optional[str] = None):
         """Set your profile bio"""
         if bio is None:
-            await ctx.send("Incorrect usage. Check the usage below:", delete_after=10)
-            await ctx.send_help(str(ctx.command))
-
-            return
+            return await ctx.send_help(ctx.command)
 
         db_user = self.bot.db.get_user(ctx.author.id) or await self.bot.db.fetch_user(
             ctx.author.id
@@ -717,11 +642,10 @@ class Information(commands.Cog, name="info"):
             f"{date} {time}", "%m/%d/%Y %H:%M:%S"
         )
         uts = str(datetime_object.timestamp())[:-2]
-        await ctx.send(
-            embed=discord.Embed(
-                title="Here's the timestamp you asked for",
-                color=colors.prim,
-                description=f"""
+        await EmbedMaker(
+            title="Here's the timestamp you asked for",
+            color=colors.prim,
+            description=f"""
 				Short Time: <t:{uts}:t> | \\<t:{uts}:t>
 				Long Time: <t:{uts}:T> | \\<t:{uts}:T>
 				Short Date: <t:{uts}:d> | \\<t:{uts}:d>
@@ -730,8 +654,7 @@ class Information(commands.Cog, name="info"):
 				Long Date/Time: <t:{uts}:F> | \\<t:{uts}:F>
 				Relative Time: <t:{uts}:R> | \\<t:{uts}:R>
 				""",
-            ),
-        )
+        ).send(ctx)
 
 
 async def setup(bot: Bot) -> None:

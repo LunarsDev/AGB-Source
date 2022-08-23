@@ -18,11 +18,12 @@ import discord
 import matplotlib
 import matplotlib.pyplot as plt
 import nekos
+import lunarapi
 import sentry_sdk
 from discord.ext import commands
-from index import BID, CHAT_API_KEY, Website, colors, config, logger
+from index import BID, CHAT_API_KEY, Website, colors, config, EmbedMaker
 from sentry_sdk import capture_exception
-from utils import default, http, imports, permissions
+from utils import imports, permissions
 from utils.checks import voter_only
 from utils.common_filters import filter_mass_mentions
 from utils.default import log
@@ -74,7 +75,7 @@ class Fun(commands.Cog, name="fun"):
         elif svg_convert == "wand":
             log("enlarge: Using wand for svg conversion.")
         else:
-            logger.error(
+            log(
                 "enlarge: Failed to import svg converter. Standard emoji will be limited to 72x72 png."
             )
         self.config = imports.get("config.json")
@@ -580,16 +581,6 @@ class Fun(commands.Cog, name="fun"):
 
     @commands.command()
     @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    async def ascii(self, ctx, *, text: str = None):
-        """Beautify some text"""
-        if text is None:
-            return await ctx.send("Please provide some text to convert to ASCII.")
-        if len(text) > 30:
-            return await ctx.send("The text cannot be over 30 characters.")
-        await ctx.send(f"```ascii\n{default.ascii_art(text)}\n```")
-
-    @commands.command()
-    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
     async def chatrevive(self, ctx):
         responces = [
             "Who is your favorite superhero? ",
@@ -631,15 +622,9 @@ class Fun(commands.Cog, name="fun"):
             "What's the most underrated (or overrated) TV show? ",
         ]
         say = random.choice(responces)
-        embed = discord.Embed(
-            colour=colors.prim,
-            title=f"{say}",
-            url=Website,
-            timestamp=ctx.message.created_at,
-        )
-        await ctx.send(
-            embed=embed,
-        )
+        await EmbedMaker(
+            title="Chat Revive", description=say, footer="mc.lunardev.group 1.19.2"
+        ).send(ctx)
 
     @commands.command()
     @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
@@ -647,9 +632,17 @@ class Fun(commands.Cog, name="fun"):
         sides = ["**Heads**", "**Tails**"]
         randomcoin = random.choice(sides)
         if random.randint(1, 6000) == 1:
-            await ctx.send("The coin landed on its side!")
+            await EmbedMaker(
+                title="Coinflip",
+                description="**The coin landed on its side!**",
+                footer="mc.lunardev.group 1.19.2 | (You got a 1/6000 chance of getting this!)",
+            )
         else:
-            await ctx.send(f"The coin landed on {randomcoin}!")
+            await EmbedMaker(
+                title="Coinflip",
+                description=randomcoin,
+                footer="mc.lunardev.group 1.19.2",
+            ).send(ctx)
 
     # @commands.command(usage="`tp!supreme text`")
     # @commands.bot_has_permissions(embed_links=True)
@@ -662,13 +655,13 @@ class Fun(commands.Cog, name="fun"):
     #     if len(text) > 25:
     #         return await ctx.send(
     #             "The file you tried to render was over 25 characters! Please try again!"
-    # )
+    #         )
     #     embed = discord.Embed(
     #         colour=colors.prim, title=f"Rendered by {ctx.author}"
-    # ).set_image(url="attachment://supreme.png")
+    #     ).set_image(url="attachment://supreme.png")
     #     image = discord.File(
     #         await (await self.alex_api.supreme(text=text)).read(), "supreme.png"
-    # )
+    #     )
     #     await ctx.send(embed=embed, file=image)
 
     # @commands.command(usage="`tp!facts text`")
@@ -895,15 +888,11 @@ class Fun(commands.Cog, name="fun"):
         if final == "":
             value = "Doesn't exist."
         # final = '=' * (user.id % 15)
-        embed = discord.Embed(
-            colour=colors.prim,
-            timestamp=ctx.message.created_at,
-            url=Website,
-        )
-        embed.add_field(name=f"{user.name}'s pp size", value=value)
-        await ctx.send(
-            embed=embed,
-        )
+        await EmbedMaker(
+            title="pp size",
+            description=f"{user.name}'s pp size\n{value}",
+            footer="mc.lunardev.group 1.19.2",
+        ).send(ctx)
 
     @commands.command(aliases=["bm"], hidden=True)
     @commands.check(permissions.is_owner)
@@ -1072,7 +1061,6 @@ class Fun(commands.Cog, name="fun"):
         https://countrycode.org/"""
         embed = discord.Embed(
             title="Covid statistics",
-            description=f"[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate}) ",
             colour=colors.prim,
             url=Website,
         )
@@ -1123,8 +1111,12 @@ class Fun(commands.Cog, name="fun"):
                         return await ctx.send(
                             "An error occured while accessing the chat API!"
                         )
-                    j = await r.json()
-                    await ctx.reply(j["cnt"], mention_author=True)
+                    j = await r.json(content_type=None)
+                    await EmbedMaker(
+                        title="Chat Bot",
+                        description=j["cnt"],
+                        footer="mc.lunardev.group 1.19.2",
+                    ).send(ctx)
 
     @commands.Cog.listener(name="on_message")
     async def autochat(self, message: discord.Message):
@@ -1228,8 +1220,11 @@ class Fun(commands.Cog, name="fun"):
         user1_name_first = user1_name[: len(user1_name) // 2]
         user2_name_last = user2_name[len(user2_name) // 2 :]
         ship_name = user1_name_first + user2_name_last
-        embed = discord.Embed(title=f"{user1} ❤ {user2}", description=ship_name)
-        await ctx.send(embed=embed)
+        await EmbedMaker(
+            title=f"{user1} ❤ {user2}",
+            description=ship_name,
+            footer="mc.lunardev.group 1.19.2",
+        ).send(ctx)
 
     @ship.command()
     @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
@@ -1238,18 +1233,22 @@ class Fun(commands.Cog, name="fun"):
         user1_name_first = thing1[: len(thing1) // 2]
         user2_name_last = thing2[len(thing2) // 2 :]
         ship_name = user1_name_first + user2_name_last
-        embed = discord.Embed(title=f"{thing1} ❤ {thing2}", description=ship_name)
-        await ctx.send(embed=embed)
+        await EmbedMaker(
+            title=f"{thing1} ❤ {thing2}",
+            description=ship_name,
+            footer="mc.lunardev.group 1.19.2",
+        ).send(ctx)
 
     @commands.command()
     @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
     async def eightball(self, ctx, *, question: commands.clean_content):
         """Ask 8ball"""
-        embed = discord.Embed(
-            title=f"{ctx.message.author.display_name} asked:", description=question
-        )
-        embed.set_image(url=nekos.img("8ball"))
-        await ctx.send(embed=embed)
+        await EmbedMaker(
+            title=f"{ctx.message.author.display_name} asked:",
+            description=question,
+            image=nekos.img("8ball"),
+            footer="mc.lunardev.group 1.19.2",
+        ).send(ctx)
 
     @commands.command()
     @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
@@ -1294,27 +1293,17 @@ class Fun(commands.Cog, name="fun"):
         """Slap people"""
         user = user or ctx.author
         if user == ctx.author:
-            embed = discord.Embed(
-                title=f"{ctx.author.name} hits themselves lol...",
-                description=f"[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate}) ",
-                url=Website,
-                colour=colors.prim,
-                timestamp=ctx.message.created_at,
-            )
+            await EmbedMaker(
+                title="You slapped yourself",
+                image=nekos.img("slap"),
+                footer="mc.lunardev.group 1.19.2",
+            ).send(ctx)
         else:
-            embed = discord.Embed(
-                title=f"{ctx.author.name} hits {user.name}...",
-                description=f"[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate}) ",
-                url=Website,
-                colour=colors.prim,
-                timestamp=ctx.message.created_at,
-            )
-
-        embed.set_image(url=nekos.img("slap"))
-        embed.set_footer(text=f" {ctx.author}", icon_url=ctx.author.avatar)
-        await ctx.send(
-            embed=embed,
-        )
+            await EmbedMaker(
+                title=f"{ctx.message.author.display_name} slapped {user.display_name}",
+                image=nekos.img("slap"),
+                footer="mc.lunardev.group 1.19.2",
+            ).send(ctx)
 
     @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
     @commands.command(hidden=True)
@@ -1325,7 +1314,6 @@ class Fun(commands.Cog, name="fun"):
             name="How'd you find this lol",
             value="[Don't click me :flushed:](https://www.youtube.com/watch?v=MwMuEBhgNNE&ab_channel=ShelseaO%27Hanlon)",
         )
-
         await ctx.send(
             embed=embed,
         )
@@ -1338,27 +1326,17 @@ class Fun(commands.Cog, name="fun"):
         """Hug people"""
         user = user or ctx.author
         if user == ctx.author:
-            embed = discord.Embed(
-                title=f"{ctx.author.name} hugs themselves, how sad...",
-                description=f"[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate}) ",
-                url=Website,
-                colour=colors.prim,
-                timestamp=ctx.message.created_at,
-            )
+            await EmbedMaker(
+                title="You hugged yourself, kinda sad lol",
+                image=nekos.img("hug"),
+                footer="mc.lunardev.group 1.19.2",
+            ).send(ctx)
         else:
-            embed = discord.Embed(
-                title=f"{ctx.author.name} hugs {user.name}...",
-                description=f"[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate}) ",
-                url=Website,
-                colour=colors.prim,
-                timestamp=ctx.message.created_at,
-            )
-
-        embed.set_image(url=nekos.img("hug"))
-        embed.set_footer(text=f" {ctx.author}", icon_url=ctx.author.avatar)
-        await ctx.send(
-            embed=embed,
-        )
+            await EmbedMaker(
+                title=f"{ctx.message.author.display_name} hugged {user.display_name}",
+                image=nekos.img("hug"),
+                footer="mc.lunardev.group 1.19.2",
+            ).send(ctx)
 
     @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
     @commands.command()
@@ -1374,28 +1352,18 @@ class Fun(commands.Cog, name="fun"):
                 "god thats sad",
                 "get a gf",
             ]
-            embed = discord.Embed(
-                title=f"{ctx.author.name} kisses themselves, {random.choice(weird)}",
-                description=f"[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate}) ",
-                url=Website,
-                colour=colors.prim,
-                timestamp=ctx.message.created_at,
-            )
+            await EmbedMaker(
+                title=f"You kissed yourself... {random.choice(weird)}",
+                image=nekos.img("kiss"),
+                footer="mc.lunardev.group 1.19.2",
+            ).send(ctx)
         else:
             cute = ["awww", "adorable", "cute", "how sweet", "how cute"]
-            embed = discord.Embed(
-                title=f"{ctx.author.name} kisses {user.name}... {random.choice(cute)}",
-                description=f"[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate}) ",
-                url=Website,
-                colour=colors.prim,
-                timestamp=ctx.message.created_at,
-            )
-
-        embed.set_image(url=nekos.img("kiss"))
-        embed.set_footer(text=f" {ctx.author}", icon_url=ctx.author.avatar)
-        await ctx.send(
-            embed=embed,
-        )
+            await EmbedMaker(
+                title=f"{ctx.message.author.display_name} kissed {user.display_name}... {random.choice(cute)}",
+                image=nekos.img("kiss"),
+                footer="mc.lunardev.group 1.19.2",
+            ).send(ctx)
 
     @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
     @commands.command()
@@ -1404,18 +1372,11 @@ class Fun(commands.Cog, name="fun"):
     async def smug(self, ctx, *, user: MemberConverter = None):
         """Look smug"""
         user = user or ctx.author
-        embed = discord.Embed(
-            title=f"{ctx.author} is smug...",
-            description=f"[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate}) ",
-            url=Website,
-            colour=colors.prim,
-            timestamp=ctx.message.created_at,
-        )
-        embed.set_image(url=nekos.img("smug"))
-        embed.set_footer(text=f" {ctx.author}", icon_url=ctx.author.avatar)
-        await ctx.send(
-            embed=embed,
-        )
+        await EmbedMaker(
+            title=f"{user} is smug",
+            image=nekos.img("smug"),
+            footer="mc.lunardev.group 1.19.2",
+        ).send(ctx)
 
     @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
     @commands.command()
@@ -1425,27 +1386,17 @@ class Fun(commands.Cog, name="fun"):
         """Pat people"""
         user = user or ctx.author
         if user == ctx.author:
-            embed = discord.Embed(
-                title=f"{ctx.author.name} pats themselves, kinda sad tbh...",
-                description=f"[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate}) ",
-                url=Website,
-                colour=colors.prim,
-                timestamp=ctx.message.created_at,
-            )
+            await EmbedMaker(
+                title="You gave yourself a pat... kinda weird ngl",
+                image=nekos.img("pat"),
+                footer="mc.lunardev.group 1.19.2",
+            ).send(ctx)
         else:
-            embed = discord.Embed(
-                title=f"{ctx.author.name} patted {user.name}...",
-                description=f"[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate}) ",
-                url=Website,
-                colour=colors.prim,
-                timestamp=ctx.message.created_at,
-            )
-
-        embed.set_image(url=nekos.img("pat"))
-        embed.set_footer(text=f" {ctx.author}", icon_url=ctx.author.avatar)
-        await ctx.send(
-            embed=embed,
-        )
+            await EmbedMaker(
+                title=f"{ctx.author.name} gave {user.display_name} a pat",
+                image=nekos.img("pat"),
+                footer="mc.lunardev.group 1.19.2",
+            ).send(ctx)
 
     @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
     @commands.command()
@@ -1455,27 +1406,16 @@ class Fun(commands.Cog, name="fun"):
         """Tickle people"""
         user = user or ctx.author
         if user == ctx.author:
-            embed = discord.Embed(
-                title=f"{ctx.author.name} tickles themselves, gross...",
-                description=f"[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate}) ",
-                url=Website,
-                colour=colors.prim,
-                timestamp=ctx.message.created_at,
-            )
+            await EmbedMaker(
+                title="You tickled yourself... kinda weird ngl",
+                image=nekos.img("tickle"),
+                footer="mc.lunardev.group 1.19.2",
+            ).send(ctx)
         else:
-            embed = discord.Embed(
-                title=f"{ctx.author.name} tickled {user.name}...",
-                description=f"[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate}) ",
-                url=Website,
-                colour=colors.prim,
-                timestamp=ctx.message.created_at,
-            )
-
-        embed.set_image(url=nekos.img("tickle"))
-        embed.set_footer(text=f" {ctx.author}", icon_url=ctx.author.avatar)
-        await ctx.send(
-            embed=embed,
-        )
+            await EmbedMaker(
+                title=f"{ctx.author.name} tickled {user.name}",
+                footer="mc.lunardev.group 1.19.2",
+            ).send(ctx)
 
     @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
     @commands.command(aliases=["jump", "murder", "slay"])
@@ -1512,29 +1452,19 @@ class Fun(commands.Cog, name="fun"):
             f"{user.name} inhaled a fart from {ctx.author.name} and died",
         ]
         if user == ctx.author:
-            embed = discord.Embed(
-                title=f"Okay you've killed yourself {ctx.author.name}, I hope this was worth it! Now tag someone else to kill them!",
-                url=Website,
-                colour=colors.prim,
-                timestamp=ctx.message.created_at,
-            )
+            await EmbedMaker(
+                title="You killed yourself, hope it was worth it! Now tag someone to kill them!",
+                footer="mc.lunardev.group 1.19.2",
+            ).send(ctx)
         else:
-            embed = discord.Embed(
-                title=f"{random.choice(kill_msg)}",
-                url=Website,
-                colour=colors.prim,
-                timestamp=ctx.message.created_at,
-            )
-
-        embed.set_footer(text=f"{ctx.author}", icon_url=ctx.author.avatar)
-        await ctx.send(
-            embed=embed,
-        )
+            await EmbedMaker(
+                title=random.choice(kill_msg), footer="mc.lunardev.group 1.19.2"
+            ).send(ctx)
 
     @commands.command()
     @voter_only()
     @permissions.dynamic_ownerbypass_cooldown(1, 3, commands.BucketType.user)
-    async def meme(self, ctx, ephemeral: bool = False):
+    async def meme(self, ctx):
         """Sends you the dankest memes"""
         subs = ["dankmemes", "memes", "ComedyCemetery"]
         subreddit = await self.reddit.subreddit(random.choice(subs))
@@ -1559,16 +1489,8 @@ class Fun(commands.Cog, name="fun"):
             return await ctx.send(url)
         elif "https://youtube.com/" in url:
             return await ctx.send(url)
-        embed = discord.Embed(
-            title=name,
-            url=url,
-            colour=colors.prim,
-            description=f"[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate}) ",
-        )
-        embed.set_image(url=url)
-        embed.set_footer(text=f"{ctx.author}", icon_url=ctx.author.avatar)
-        await ctx.send(
-            content="Alright, have this meme.", embed=embed, ephemeral=ephemeral
+        await EmbedMaker(title=name, image=url, footer="mc.lunardev.group 1.19.2").send(
+            ctx
         )
 
     @commands.guild_only()
@@ -1600,27 +1522,19 @@ class Fun(commands.Cog, name="fun"):
                 return await ctx.send(url)
             elif "https://streamable.com/" in url:
                 return
-            embed = discord.Embed(
-                title=name,
-                url=url,
-                colour=colors.prim,
-                timestamp=ctx.message.created_at,
-                description=f"[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate}) ",
-            )
-            embed.set_image(url=url)
-            embed.set_footer(text=f"{ctx.author}", icon_url=ctx.author.avatar)
-            await ctx.send(content="Alright, have this post.", embed=embed)
+            await EmbedMaker(
+                title=name, url=url, footer="mc.lunardev.group 1.19.2"
+            ).send(ctx)
 
     @permissions.dynamic_ownerbypass_cooldown(1, 15, commands.BucketType.user)
     @commands.command()
     async def hack(self, ctx, user: MemberConverter = None):
         """Hack a user, totally real and legit"""
+        await ctx.typing()
         if user is None:
-            async with ctx.channel.typing():
-                await ctx.send("I can't hack air, mention someone.")
+            await ctx.send("I can't hack air, mention someone.")
         elif user == ctx.author:
-            async with ctx.channel.typing():
-                await ctx.send("Lol what would hacking yourself get you lmao")
+            await ctx.send("Lol what would hacking yourself get you lmao")
         else:
             email_fun = [
                 "69420",
@@ -1641,9 +1555,8 @@ class Fun(commands.Cog, name="fun"):
                 "is_assholesniffer",
                 "is_stupid",
             ]
-            email_address = (
-                f"{user.name.lower()}{random.choice(email_fun).lower()}@gmail.com"
-            )
+            addresses = ["@gmail.com", "@protonmail.com", "@lunardev.group"]
+            email_address = f"{user.name.lower()}{random.choice(email_fun).lower()}{random.choice(addresses)}"
             passwords = [
                 "animeislife69420",
                 "big_awoogas",
@@ -1714,63 +1627,76 @@ class Fun(commands.Cog, name="fun"):
             Most_Used_Discord_Server = f"{random.choice(Discord_Servers)}"
             async with ctx.channel.typing():
                 msg1 = await ctx.send(
-                    "Initializing Hack.exe... <a:discord_loading:816846352075456512>"
+                    embed=EmbedMaker(
+                        description="Initializing Hack.exe... <a:discord_loading:816846352075456512>"
+                    )
                 )
                 await asyncio.sleep(1)
-                real_msg1 = await ctx.channel.fetch_message(msg1.id)
-                await real_msg1.edit(
-                    content=f"Successfully initialized Hack.exe, beginning hack on {user.name}... <a:discord_loading:816846352075456512>"
+                await msg1.edit(
+                    embed=EmbedMaker(
+                        description=f"Successfully initialized Hack.exe, beginning hack on {user.name}... <a:discord_loading:816846352075456512>"
+                    )
                 )
                 await asyncio.sleep(1)
-                real_msg2 = await ctx.channel.fetch_message(msg1.id)
-                await real_msg2.edit(
-                    content=f"Logging into {user.name}'s Discord Account... <a:discord_loading:816846352075456512>"
+                await msg1.edit(
+                    embed=EmbedMaker(
+                        description=f"Logging into {user.name}'s Discord Account... <a:discord_loading:816846352075456512>"
+                    )
                 )
                 await asyncio.sleep(1)
-                real_msg3 = await ctx.channel.fetch_message(msg1.id)
-                await real_msg3.edit(
-                    content=f"<:discord:816846362267090954> Logged into {user.name}'s Discord:\nEmail Address: `{email_address}`\nPassword: `{password}`"
+                await msg1.edit(
+                    embed=EmbedMaker(
+                        description=f"<:discord:816846362267090954> Logged into {user.name}'s Discord:\nEmail Address: `{email_address}`\nPassword: `{password}`"
+                    )
                 )
                 await asyncio.sleep(1)
-                real_msg4 = await ctx.channel.fetch_message(msg1.id)
-                await real_msg4.edit(
-                    content="Fetching DMs from their friends(if there are any)... <a:discord_loading:816846352075456512>"
+                await msg1.edit(
+                    embed=EmbedMaker(
+                        description="Fetching DMs from their friends(if there are any)... <a:discord_loading:816846352075456512>"
+                    )
                 )
                 await asyncio.sleep(1)
-                real_msg5 = await ctx.channel.fetch_message(msg1.id)
-                await real_msg5.edit(
-                    content=f"Latest DM from {user.name}: `{latest_DM}`"
+                await msg1.edit(
+                    embed=EmbedMaker(
+                        description=f"Latest DM from {user.name}: `{latest_DM}`"
+                    )
                 )
                 await asyncio.sleep(1)
-                real_msg6 = await ctx.channel.fetch_message(msg1.id)
-                await real_msg6.edit(
-                    content="Getting IP address... <a:discord_loading:816846352075456512>"
+                await msg1.edit(
+                    embed=EmbedMaker(
+                        description="Getting IP address... <a:discord_loading:816846352075456512>"
+                    )
                 )
                 await asyncio.sleep(1)
-                real_msg7 = await ctx.channel.fetch_message(msg1.id)
-                await real_msg7.edit(content=f"IP address found: `{ip_address}`")
-                await asyncio.sleep(1)
-                real_msg11 = await ctx.channel.fetch_message(msg1.id)
-                await real_msg11.edit(
-                    content="Fetching the Most Used Discord Server... <a:discord_loading:816846352075456512>"
+                await msg1.edit(
+                    embed=EmbedMaker(description=f"IP address found: `{ip_address}`")
                 )
                 await asyncio.sleep(1)
-                real_msg10 = await ctx.channel.fetch_message(msg1.id)
-                await real_msg10.edit(
-                    content=f"Most used Discord Server in {user.name}'s Account: `{Most_Used_Discord_Server}`"
+                await msg1.edit(
+                    embed=EmbedMaker(
+                        description="Fetching the Most Used Discord Server... <a:discord_loading:816846352075456512>"
+                    )
                 )
                 await asyncio.sleep(1)
-                real_msg8 = await ctx.channel.fetch_message(msg1.id)
-                await real_msg8.edit(
-                    content="Selling data to the dark web... <a:discord_loading:816846352075456512>"
+                await msg1.edit(
+                    embed=EmbedMaker(
+                        description=f"Most used Discord Server in {user.name}'s Account: `{Most_Used_Discord_Server}`"
+                    )
+                )
+                await asyncio.sleep(1)
+                await msg1.edit(
+                    embed=EmbedMaker(
+                        description="Selling data to the dark web... <a:discord_loading:816846352075456512>"
+                    )
                 )
 
                 await asyncio.sleep(1)
-                real_msg9 = await ctx.channel.fetch_message(msg1.id)
-                await real_msg9.edit(content="Hacking complete.")
+                await msg1.edit(embed=EmbedMaker(description="Hacking complete."))
                 await asyncio.sleep(1.5)
-                await real_msg9.edit(
-                    content=f"{user.name} has successfully been hacked. <a:EpicTik:816846395302477824>\n\n**{user.name}**'s Data:\nDiscord Email: `{email_address}`\nDiscord Password: `{password}`\nMost used Discord Server: `{Most_Used_Discord_Server}`\nIP Address: `{ip_address}`\nLatest DM: `{latest_DM}`"
+                await msg1.edit(
+                    embed=EmbedMaker(
+                        description=f"{user.name} has successfully been hacked. <a:EpicTik:816846395302477824>\n\n**{user.name}**'s Data:\nDiscord Email: `{email_address}`\nDiscord Password: `{password}`\nMost used Discord Server: `{Most_Used_Discord_Server}`\nIP Address: `{ip_address}`\nLatest DM: `{latest_DM}`"
+                    )
                 )
 
     @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
@@ -1789,50 +1715,37 @@ class Fun(commands.Cog, name="fun"):
                     if breeds
                     else "Weight Unavailable"
                 )
-
-                embed = discord.Embed(
-                    title="Enjoy this doggo <3",
+                await EmbedMaker(
+                    "Enjoy this doggo <3",
                     url="https://lunardev.group/",
                     description=f"**Name**\n{breeds[0]['name'] if breeds else 'Name Unavailable'}\n\n**Weight**\n{weight}",
-                    colour=colors.prim,
-                    timestamp=ctx.message.created_at,
-                )
-
-                embed.set_image(url=data[0]["url"])
-                embed.set_footer(text="lunardev.group", icon_url=ctx.author.avatar)
-                await ctx.send(
-                    embed=embed,
-                )
+                    image=data[0]["url"],
+                    footer="mc.lunardev.group 1.19.2",
+                ).send(ctx)
 
     @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
     @commands.hybrid_command()
     @commands.bot_has_permissions(embed_links=True)
     async def cat(self, ctx):
         """Kitties!!"""
-        embed = discord.Embed(
-            title="Enjoy this cat <3", colour=colors.prim, url=Website
-        )
-        embed.set_image(url=await self.get_kitties())
-        embed.set_footer(text="lunardev.group", icon_url=ctx.author.avatar)
-        await ctx.send(embed=embed)
+        await EmbedMaker(
+            title="Enjoy this kitty <3",
+            url=Website,
+            image=await self.get_kitties(),
+            footer="mc.lunardev.group 1.19.2",
+        ).send(ctx)
 
     @commands.command()
     @commands.bot_has_permissions(embed_links=True)
     @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
     async def birb(self, ctx):
         """Its really just geese"""
-        embed = discord.Embed(
-            title="H o n k",
-            colour=colors.prim,
-            description=f"[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate}) ",
-            timestamp=ctx.message.created_at,
+        await EmbedMaker(
+            title="Enjoy this birb <3",
             url=Website,
-        )
-        embed.set_image(url=nekos.img("goose"))
-        embed.set_footer(text=f" {ctx.author}", icon_url=ctx.author.avatar)
-        await ctx.send(
-            embed=embed,
-        )
+            image=nekos.img("goose"),
+            footer="mc.lunardev.group 1.19.2",
+        ).send(ctx)
 
     @commands.command()
     @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
@@ -1867,9 +1780,10 @@ class Fun(commands.Cog, name="fun"):
             await message.delete()
         amount = len(self.channels[str(ctx.channel.id)]["reacted"])
         word = "person has" if amount == 1 else "people have"
-        await ctx.send(
-            f"**{amount}** {word} paid respects to **{filter_mass_mentions(answer)}**."
-        )
+        await EmbedMaker(
+            description=f"**{amount}** {word} paid respects to **{filter_mass_mentions(answer)}**.",
+            footer="mc.lunardev.group 1.19.2",
+        ).send(ctx)
         del self.channels[str(ctx.channel.id)]
 
     @commands.Cog.listener(name="on_reaction_add")
@@ -1898,51 +1812,17 @@ class Fun(commands.Cog, name="fun"):
         """( ͡° ͜ʖ ͡°)"""
         await ctx.send("( ͡° ͜ʖ ͡°)")
 
-    @commands.hybrid_command()
-    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    async def urban(self, ctx, *, search: commands.clean_content):
-        """Find the 'best' definition to your words"""
-        await ctx.typing(ephemeral=True)
-        async with ctx.channel.typing():
-            try:
-                url = await http.get(
-                    f"https://api.urbandictionary.com/v0/define?term={search}",
-                    res_method="json",
-                )
-            except Exception as e:
-                capture_exception(e)
-                return await ctx.send(
-                    "Urban API returned invalid data... might be down atm."
-                )
-            if not url:
-                return await ctx.send("I think the API broke...")
-            if not len(url["list"]):
-                return await ctx.send("Couldn't find your search in the dictionary...")
-            result = sorted(
-                url["list"], reverse=True, key=lambda g: int(g["thumbs_up"])
-            )[0]
-            definition = result["definition"]
-            if len(definition) >= 1000:
-                definition = definition[:1000]
-                definition = definition.rsplit(" ", 1)[0]
-                definition += "..."
-            if ctx.interaction is None:
-                if not ctx.channel.is_nsfw():
-                    # raise nsfw channel required
-                    raise commands.NSFWChannelRequired(ctx.channel)
-                await ctx.send(
-                    f"📚 Definitions for **{result['word']}**```fix\n{definition}```"
-                )
-                return
-            await ctx.send(
-                f"📚 Definitions for **{result['word']}**```fix\n{definition}```",
-                ephemeral=True,
-            )
-
     @commands.command(hidden=True)
     @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
     async def coom(self, ctx):
         await ctx.send("https://www.youtube.com/watch?v=yvWUDNsZXwA")
+
+    @commands.command(hidden=True)
+    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
+    async def cmputer(self, ctx):
+        await ctx.send(
+            "https://cdn.discordapp.com/attachments/976866146391306260/1005275242412908544/unknown.png"
+        )
 
     @commands.command(hidden=True)
     @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
@@ -2039,7 +1919,11 @@ class Fun(commands.Cog, name="fun"):
     async def reverse(self, ctx, *, text: str):
         """Reverses things"""
         t_rev = text[::-1].replace("@", "@‎").replace("&", "&‎")
-        await ctx.send(f"🔁 {t_rev}")
+        await EmbedMaker(
+            f"Reversed {text}",
+            description=f"🔁 {t_rev}",
+            footer="mc.lunardev.group 1.19.2",
+        ).send(ctx)
 
     @commands.command()
     @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
@@ -2063,7 +1947,10 @@ class Fun(commands.Cog, name="fun"):
     async def rate(self, ctx, *, thing: commands.clean_content):
         """Rates what you want"""
         rate_amount = random.uniform(0.0, 100.0)
-        await ctx.send(f"I'd rate `{thing}` a **{round(rate_amount, 4)} / 100**")
+        await EmbedMaker(
+            description=f"I'd rate `{thing}` a **{round(rate_amount, 4)} / 100**",
+            footer="mc.lunardev.group 1.19.2",
+        ).send(ctx)
 
     @permissions.dynamic_ownerbypass_cooldown(1, 2.5, type=commands.BucketType.user)
     @commands.command()
@@ -2081,7 +1968,10 @@ class Fun(commands.Cog, name="fun"):
             emoji = "💖"
         if hot > 75:
             emoji = "💞"
-        await ctx.send(f"**{user.name}** is **{hot:.2f}%** hot {emoji}")
+        await EmbedMaker(
+            description=f"**{user.name}** is **{hot:.2f}%** hot {emoji}",
+            footer="mc.lunardev.group 1.19.2",
+        ).send(ctx)
 
     @permissions.dynamic_ownerbypass_cooldown(1, 2.5, type=commands.BucketType.user)
     @commands.command()
@@ -2104,7 +1994,10 @@ class Fun(commands.Cog, name="fun"):
             emoji = "<:yikes:838988155947319337>"
         if gay > 75:
             emoji = "<:stop_pls:838988169251782666>"
-        await ctx.send(f"**{user.name}** is **{gay:.2f}%** gay {emoji}")
+        await EmbedMaker(
+            description=f"**{user.name}** is **{gay:.2f}%** gay {emoji}",
+            footer="mc.lunardev.group 1.19.2",
+        ).send(ctx)
 
     @permissions.dynamic_ownerbypass_cooldown(1, 2.5, type=commands.BucketType.user)
     @commands.command()
@@ -2124,7 +2017,10 @@ class Fun(commands.Cog, name="fun"):
             emoji = "<:yikes:838988155947319337>"
         if simp > 75:
             emoji = "<:stop_pls:838988169251782666>"
-        await ctx.send(f"**{user.name}** is **{simp:.2f}%** simp {emoji}")
+        await EmbedMaker(
+            description=f"**{user.name}** is **{simp:.2f}%** simp {emoji}",
+            footer="mc.lunardev.group 1.19.2",
+        ).send(ctx)
 
     @permissions.dynamic_ownerbypass_cooldown(1, 2.5, type=commands.BucketType.user)
     @commands.command()
@@ -2150,7 +2046,84 @@ class Fun(commands.Cog, name="fun"):
             emoji = "<:yikes:838988155947319337>"
         if horny > 150:
             emoji = "<:stop_pls:838988169251782666>"
-        await ctx.send(f"**{user.name}** is **{horny:.2f}%** horny {emoji}")
+        await EmbedMaker(
+            description=f"**{user.name}** is **{horny:.2f}%** horny {emoji}",
+            footer="mc.lunardev.group 1.19.2",
+        ).send(ctx)
+
+    @commands.hybrid_group(name="gen")
+    async def gen(self, ctx: commands.Context):
+        """
+        Image generation commands
+        """
+        await EmbedMaker(
+            "Image Generation Commands",
+            description="Looking for `tp!gen`? Well, these are slash commands!\nType `/gen` to get started with a list of these ones :eyes:",
+            footer="mc.lunardev.group 1.19.2",
+        ).send(ctx)
+
+    @gen.command()
+    async def achievement(self, ctx, *, text: str):
+        async with aiohttp.ClientSession() as session:
+            client = lunarapi.Client(
+                session=session,
+                token=config.lunarapi.tokenNew,
+            )
+            image = await client.request(
+                lunarapi.endpoints.generate_achievement, text=text
+            )
+
+            await ctx.send(file=await image.file(discord))
+
+    @gen.command()
+    async def amiajoke(self, ctx, *, user: discord.User):
+        async with aiohttp.ClientSession() as session:
+            client = lunarapi.Client(
+                session=session,
+                token=config.lunarapi.tokenNew,
+            )
+            image = await client.request(
+                lunarapi.endpoints.generate_amiajoke, image=user.avatar.url
+            )
+
+            await ctx.send(file=await image.file(discord))
+
+    @gen.command()
+    async def bad(self, ctx, *, user: discord.User):
+        async with aiohttp.ClientSession() as session:
+            client = lunarapi.Client(
+                session=session,
+                token=config.lunarapi.tokenNew,
+            )
+            image = await client.request(
+                lunarapi.endpoints.generate_bad, image=user.avatar.url
+            )
+
+            await ctx.send(file=await image.file(discord))
+
+    @gen.command()
+    async def calling(self, ctx, *, text: str):
+        async with aiohttp.ClientSession() as session:
+            client = lunarapi.Client(
+                session=session,
+                token=config.lunarapi.tokenNew,
+            )
+            image = await client.request(lunarapi.endpoints.generate_calling, text=text)
+
+            await ctx.send(file=await image.file(discord))
+
+    @gen.command()
+    async def challenge(self, ctx, *, text: str):
+        async with aiohttp.ClientSession() as session:
+            client = lunarapi.Client(
+                session=session,
+                token=config.lunarapi.tokenNew,
+            )
+            image = await client.request(
+                lunarapi.endpoints.generate_challenge, text=text
+            )
+
+            await ctx.send(file=await image.file(discord))
 
 
 async def setup(bot: Bot) -> None:

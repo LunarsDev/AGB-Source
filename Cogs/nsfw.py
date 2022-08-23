@@ -1,3 +1,5 @@
+
+
 from __future__ import annotations
 
 import asyncio
@@ -9,6 +11,7 @@ from typing import TYPE_CHECKING, List, Optional, Union
 import aiohttp
 import discord
 from discord.ext import commands
+from Cogs.admin import PersistentView
 from index import EMBED_COLOUR, colors, config
 from utils import constants as sub
 from utils import default, imports, permissions
@@ -283,9 +286,9 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
         other_stuff = ["jpg", "gif", "yuri", "panties", "thighs", "ass"]
         async with aiohttp.ClientSession(headers=self.lunar_headers) as s:
             async with s.get(
-                f"https://lunardev.group/api/nsfw/{random.choice(other_stuff)}"
+                f"https://api.lunardev.group/nsfw/{random.choice(other_stuff)}"
             ) as r:
-                j = await r.json()
+                j = await r.json(content_type=None)
                 url = j["url"]
 
         return url
@@ -293,8 +296,8 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
     async def get_hentai_lunar(self, endpoint):
         try:
             async with aiohttp.ClientSession(headers=self.lunar_headers) as s:
-                async with s.get(f"https://lunardev.group/api/nsfw/{endpoint}") as r:
-                    j = await r.json()
+                async with s.get(f"https://api.lunardev.group/nsfw/{endpoint}") as r:
+                    j = await r.json(content_type=None)
                     url = j["url"]
 
             return url
@@ -447,14 +450,18 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
                 colour=colors.prim,
             )
             embed.set_image(url=url)
-            embed.set_footer(text=f"lunardev.group | {used_commands} commands used.")
+            embed.set_footer(
+                text=f"mc.lunardev.group 1.19.2 |  {used_commands} commands used."
+            )
             if ctx.interaction is None:
                 if not ctx.channel.is_nsfw():
                     # raise nsfw channel required
                     raise commands.NSFWChannelRequired(ctx.channel)
-                await ctx.send(embed=embed)
+                await ctx.send(embed=embed, view=PersistentView(commands.Context))
                 return
-            await ctx.send(embed=embed, ephemeral=True)
+            await ctx.send(
+                embed=embed, ephemeral=True, view=PersistentView(commands.Context)
+            )
         else:
             await self._send_msg(ctx, "ass", sub.ASS)
 
@@ -478,14 +485,18 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
             colour=colors.prim,
         )
         embed.set_image(url=url)
-        embed.set_footer(text=f"lunardev.group | {used_commands} commands used.")
+        embed.set_footer(
+            text=f"mc.lunardev.group 1.19.2 |  {used_commands} commands used."
+        )
         if ctx.interaction is None:
             if not ctx.channel.is_nsfw():
                 # raise nsfw channel required
                 raise commands.NSFWChannelRequired(ctx.channel)
-            await ctx.send(embed=embed)
+            await ctx.send(embed=embed, view=PersistentView(commands.Context))
             return
-        await ctx.send(embed=embed, ephemeral=True)
+        await ctx.send(
+            embed=embed, ephemeral=True, view=PersistentView(commands.Context)
+        )
 
     @nsfw.command()
     @voter_only()
@@ -499,6 +510,7 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
         await ctx.typing(ephemeral=True)
         # return await ctx.send("This command is being on.", ephemeral=True)
         url = await self.get_hentai_lunar("hololive")
+        log(url)
 
         embed = discord.Embed(
             title="Enjoy",
@@ -507,14 +519,18 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
             colour=colors.prim,
         )
         embed.set_image(url=url)
-        embed.set_footer(text=f"lunardev.group | {used_commands} commands used.")
+        embed.set_footer(
+            text=f"mc.lunardev.group 1.19.2 |  {used_commands} commands used."
+        )
         if ctx.interaction is None:
             if not ctx.channel.is_nsfw():
                 # raise nsfw channel required
                 raise commands.NSFWChannelRequired(ctx.channel)
-            await ctx.send(embed=embed)
+            await ctx.send(embed=embed, view=PersistentView(commands.Context))
             return
-        await ctx.send(embed=embed, ephemeral=True)
+        await ctx.send(
+            embed=embed, ephemeral=True, view=PersistentView(commands.Context)
+        )
 
     @nsfw.command()
     @voter_only()
@@ -535,14 +551,18 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
             colour=colors.prim,
         )
         embed.set_image(url=url)
-        embed.set_footer(text=f"lunardev.group | {used_commands} commands used.")
+        embed.set_footer(
+            text=f"mc.lunardev.group 1.19.2 |  {used_commands} commands used."
+        )
         if ctx.interaction is None:
             if not ctx.channel.is_nsfw():
                 # raise nsfw channel required
                 raise commands.NSFWChannelRequired(ctx.channel)
-            await ctx.send(embed=embed)
+            await ctx.send(embed=embed, view=PersistentView(commands.Context))
             return
-        await ctx.send(embed=embed, ephemeral=True)
+        await ctx.send(
+            embed=embed, ephemeral=True, view=PersistentView(commands.Context)
+        )
 
     @nsfw.command()
     @voter_only()
@@ -564,14 +584,18 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
             colour=colors.prim,
         )
         embed.set_image(url=url)
-        embed.set_footer(text=f"lunardev.group | {used_commands} commands used.")
+        embed.set_footer(
+            text=f"mc.lunardev.group 1.19.2 |  {used_commands} commands used."
+        )
         if ctx.interaction is None:
             if not ctx.channel.is_nsfw():
                 # raise nsfw channel required
                 raise commands.NSFWChannelRequired(ctx.channel)
-            await ctx.send(embed=embed)
+            await ctx.send(embed=embed, view=PersistentView(commands.Context))
             return
-        await ctx.send(embed=embed, ephemeral=True)
+        await ctx.send(
+            embed=embed, ephemeral=True, view=PersistentView(commands.Context)
+        )
 
     @nsfw.command()
     @voter_only()
@@ -593,14 +617,18 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
             colour=colors.prim,
         )
         embed.set_image(url=url)
-        embed.set_footer(text=f"lunardev.group | {used_commands} commands used.")
+        embed.set_footer(
+            text=f"mc.lunardev.group 1.19.2 |  {used_commands} commands used."
+        )
         if ctx.interaction is None:
             if not ctx.channel.is_nsfw():
                 # raise nsfw channel required
                 raise commands.NSFWChannelRequired(ctx.channel)
-            await ctx.send(embed=embed)
+            await ctx.send(embed=embed, view=PersistentView(commands.Context))
             return
-        await ctx.send(embed=embed, ephemeral=True)
+        await ctx.send(
+            embed=embed, ephemeral=True, view=PersistentView(commands.Context)
+        )
 
     @commands.hybrid_group()
     @voter_only()
@@ -623,8 +651,10 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
         # return await ctx.send("This command is being on.", ephemeral=True)
         if ctx.invoked_subcommand is None:
             return await ctx.send(
-                "Invalid nsfw command. Please use `tp!help reddit` to see the nsfw commands."
+                "Invalid nsfw command. Please use `tp!help reddit_drawing` to see the nsfw commands."
             )
+
+# from https://github.com/PredaaA/predacogs/tree/master/nsfw 
 
     @commands.hybrid_group()
     @voter_only()
@@ -657,7 +687,7 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
     @permissions.dynamic_ownerbypass_cooldown(1, 3, commands.BucketType.user)
     async def asian(self, ctx: commands.Context):
         """Sends some asian images."""
-        await self._send_msg(ctx, "asian porn", sub.ASIANPORN)
+        await self._send_msg(ctx, name="asian porn", subs=sub.ASIANPORN)
 
     @reddit_irl.command()
     @voter_only()

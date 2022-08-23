@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Literal, Optional, Union, overload
 
 from asyncpg import Pool, Record, create_pool
-from utils.errors import DatabaseError
 
+from utils.errors import DatabaseError
 from .logger import formatColor
 from .objects import *
 
@@ -161,6 +161,24 @@ class Database(Connection):
             Table.STATUS: ("id", self._statuses),
         }
 
+    def __repr__(self) -> str:
+        cache_totals = " ".join(
+            f"{t.name.title()}: {len(cache.values())}"
+            for t, (_, cache) in self._table_to_cache.items()
+        )
+        return f"{self.__class__.__name__}({cache_totals})"
+
+    def _add_to_cache(self, table: Table, class_instance: Any) -> None:
+        cache_key, cache_dict = self._table_to_cache[table]
+
+        actual_cache_key = getattr(class_instance, cache_key)
+        casted_actual_cache_key = (
+            int(actual_cache_key)
+            if isinstance(actual_cache_key, str) and actual_cache_key.isdigit()
+            else str(actual_cache_key)
+        )
+        cache_dict[casted_actual_cache_key] = class_instance
+
     async def initate_database(self, *, chunk: bool = True) -> None:
         # circular imports
         from utils.default import log
@@ -244,7 +262,7 @@ class Database(Connection):
             )
         if blacklist:
             log(LOG_CHUNKING_TEXT.format(LOG_CHUNKING_PREFIX, "blacklist"))
-            objs = await self.fetch_blacklists(cache=cache)
+            objs = await self.fetch_blacklists_table(cache=cache)
             log(
                 LOG_CHUNKING_TEXT.format(LOG_CHUNKING_PREFIX, "blacklist")
                 + f" Done! Chunked {len(objs)} entries."
@@ -308,12 +326,20 @@ class Database(Connection):
 
     @overload
     async def __fetch(
-        self, table: Table, cache: Any, where: Literal[None] = ...
+        self, table: Table, cache: Any, where: Literal[None] = ..., fetch_one: Any = ...
     ) -> list[Any]:
         ...
 
     @overload
-    async def __fetch(self, table: Any, cache: Any, where: Any) -> Optional[Any]:
+    async def __fetch(
+        self, table: Table, cache: Any, where: Any, fetch_one: Literal[True] = ...
+    ) -> Optional[Any]:
+        ...
+
+    @overload
+    async def __fetch(
+        self, table: Table, cache: Any, where: Any, fetch_one: Literal[False] = ...
+    ) -> list[Any]:
         ...
 
     async def __fetch(
@@ -321,41 +347,54 @@ class Database(Connection):
         table: Table,
         cache: bool = False,
         where: Optional[dict[str, Any]] = None,
+        fetch_one: Optional[bool] = None,
     ) -> Union[list[Any], Optional[Any]]:
+        """
+        Fetch objects from the database.
+
+        Parameters
+        ----------
+        table: Table
+            The table to fetch from.
+        cache: Optional[bool]
+            Whether to cache the results.
+        where: Optional[dict[str, Any]]
+            The where clause to use.
+        fetch_one: bool
+            Whether to fetch one or many. This is ``True`` if `where` is not ``None``
+            unless it's explicitly set to ``False``.
+        """
         query = f"SELECT * FROM {table.value}"
-        _cache = self._table_to_cache[table]
         cls = table_to_cls[table]
+        values = tuple(where.values()) if where else ()
+
+        if fetch_one is None:
+            fetch_one = where is not None
 
         if where is not None:
             query += " WHERE " + " AND ".join(
                 f"{k} = ${i}" for i, (k, v) in enumerate(where.items(), start=1)
             )
-            data = await self.fetchrow(query, *where.values())
-            if not data:
+
+        if fetch_one is True:
+            data = await self.fetchrow(query, *values)
+            if data is None:
                 return None
 
+            inst = cls(self, dict(data))
             if cache:
-                key, cache_dict = _cache
-                cache_dict[data[key]] = cls(self, dict(data))
+                self._add_to_cache(table, inst)
 
-            return cls(self, dict(data))
+            return inst
 
-        entries = await self.fetch(
-            query,
-        )
         to_ret = []
-        for entry in entries:
+        data = await self.fetch(query, *values)
+        for entry in data:
+            if not entry:
+                continue
             inst = cls(self, dict(entry))
             if cache:
-                key, cache_dict = _cache
-                dict_key_value = entry[key]
-                dict_key_value = (
-                    int(dict_key_value)
-                    if dict_key_value.isdigit()
-                    else str(dict_key_value)
-                )
-                cache_dict[dict_key_value] = inst
-
+                self._add_to_cache(table, inst)
             to_ret.append(inst)
 
         return to_ret
@@ -415,7 +454,7 @@ class Database(Connection):
     async def add_user(self, user_id: int) -> User:
         query = f"INSERT INTO {Table.USERS} (userid) VALUES ($1) RETURNING *"
         data = await self.fetchrow(query, str(user_id))
-        return User(self, dict(data))
+        return User(self, dict(data))  # type: ignore
 
     async def remove_user(self, user_id: int) -> Optional[User]:
         query = f"DELETE FROM {Table.USERS} WHERE userid = $1"
@@ -576,7 +615,7 @@ class Database(Connection):
     # TODO: this doesn't look right.
     async def add_badge(self, user_id, badge: Badges) -> Badge:
         query = f"INSERT INTO {Table.BADGES} (userid, {badge.value}) VALUES ($1) RETURNING *"
-        data = await self.fetchrow(query, str(user_id))
+        await self.fetchrow(query, str(user_id))
         inst = Badge(self, name=badge.value)
         self._badges[badge.value] = inst
         return inst
@@ -612,9 +651,67 @@ class Database(Connection):
 
     # blacklist
 
-    async def add_blacklist(self, user_id: int, blacklisted: bool = False) -> Blacklist:
+    async def add_blacklist(
+        self,
+        user_id: int,
+        blacklisted: bool = False,
+        blacklistedtill: Optional[int] = None,
+        reason: Optional[str] = None,
+    ) -> Blacklist:
+        if blacklistedtill:
+            return await self.add_temp_blacklist(
+                user_id, blacklisted, blacklistedtill, reason
+            )
         query = f"INSERT INTO {Table.BLACKLIST} (userid, blacklisted) VALUES ($1, $2) RETURNING *"
-        data = await self.fetchrow(query, str(user_id), str(blacklisted).lower())
+
+        values = (str(user_id), str(blacklisted).lower())
+        if reason is not None:
+            query = f"INSERT INTO {Table.BLACKLIST} (userid, blacklisted, reason) VALUES ($1, $2, $3) RETURNING *"
+            values += (reason,)
+
+        data = await self.fetchrow(query, *values)
+        inst = Blacklist(self, dict(data))  # type: ignore
+        self._blacklists[user_id] = inst
+        return inst
+
+    async def add_temp_blacklist(
+        self,
+        user_id: int,
+        blacklisted: bool = False,
+        days: Optional[int] = None,
+        reason: Optional[str] = None,
+    ) -> Blacklist:
+        from Cogs.Utils import create_blacklist_date
+
+        blacklistdate = create_blacklist_date(days)
+        query = f"INSERT INTO {Table.BLACKLIST} (userid, blacklisted, blacklistedtill) VALUES ($1, $2, $3) RETURNING *"
+        values = (str(user_id), str(blacklisted).lower(), blacklistdate)
+        if reason is not None:
+            query = f"INSERT INTO {Table.BLACKLIST} (userid, blacklisted, blacklistedtill, reason) VALUES ($1, $2, $3, $4) RETURNING *"
+            values += (reason,)
+
+        data = await self.fetchrow(query, *values)
+        inst = Blacklist(self, dict(data))  # type: ignore
+        self._blacklists[user_id] = inst
+        return inst
+
+    async def update_temp_blacklist(
+        self,
+        user_id: int,
+        blacklisted: bool = False,
+        days: Optional[int] = None,
+        reason: Optional[str] = None,
+    ) -> Optional[Blacklist]:
+        from Cogs.Utils import create_blacklist_date
+
+        blacklistdate = create_blacklist_date(days)
+        query = f"UPDATE {Table.BLACKLIST} SET blacklisted = $1, blacklistedtill = $2 WHERE userid = $3 AND blacklisted = 'false'"
+        values = (str(blacklisted).lower(), blacklistdate, str(user_id))
+        if reason is not None:
+            query = f"UPDATE {Table.BLACKLIST} SET blacklisted = $1, blacklistedtill = $2, reason = $4 WHERE userid = $3 AND blacklisted = 'false'"
+            values += (reason,)
+
+        data = await self.fetchrow(query, *values)
         inst = Blacklist(self, dict(data))  # type: ignore
         self._blacklists[user_id] = inst
         return inst
@@ -627,8 +724,13 @@ class Database(Connection):
     def get_blacklist(self, user_id: int) -> Optional[Blacklist]:
         return self._blacklists.get(user_id)
 
-    async def fetch_blacklists(self, cache: bool = False) -> list[Blacklist]:
+    async def fetch_blacklists_table(self, cache: bool = False) -> list[Blacklist]:
         return await self.__fetch(Table.BLACKLIST, cache=cache)
+
+    async def fetch_blacklists(self, cache: bool = False) -> list[Blacklist]:
+        return await self.__fetch(
+            Table.BLACKLIST, cache=cache, where={"blacklisted": "true"}, fetch_one=False
+        )
 
     async def fetch_blacklist(
         self, user_id: int, cache: bool = False

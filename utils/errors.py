@@ -1,5 +1,6 @@
-from discord.ext.commands.errors import CheckFailure
 from typing import Any
+
+from discord.ext.commands.errors import CheckFailure
 
 
 class DatabaseError(Exception):
@@ -12,6 +13,11 @@ class DatabaseError(Exception):
 class DisabledCommand(CheckFailure):
     def __init__(self):
         super().__init__(":x: This command has been disabled!")
+
+
+class BlacklistedUser(CheckFailure):
+    def __init__(self):
+        super().__init__(":x: You're blacklisted nerd.")
 
 
 class GlobalDisabledCommand(CheckFailure):

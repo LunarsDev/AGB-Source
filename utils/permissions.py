@@ -1,7 +1,9 @@
 import contextlib
+
 import discord
 from discord import app_commands
 from discord.ext import commands
+from index import Website, colors
 
 from utils import imports
 
@@ -82,6 +84,53 @@ def slash_has_permissions(*, check=all, **perms):
             return await slash_check_permissions(interaction, perms, check=check)
 
     return app_commands.check(pred)
+
+
+async def make_embed(
+    ctx,
+    title: str = None,
+    description: str = None,
+    url=Website,
+    author: str = None,
+    author_icon: str = None,
+    footer: str = None,
+    thumbnail: str = None,
+    image: str = None,
+    color: discord.Color = colors.prim,
+) -> discord.Embed:
+    embed = discord.Embed(title=title, description=description, color=color, url=url)
+    if author is not None:
+        embed.set_author(name=author, icon_url=author_icon)
+    if footer is not None:
+        embed.set_footer(text=footer)
+    if thumbnail is not None:
+        embed.set_thumbnail(url=thumbnail)
+    if image is not None:
+        embed.set_image(url=image)
+    await ctx.send(embed=embed)
+
+
+def return_embed(
+    title: str = None,
+    description: str = None,
+    url=Website,
+    author: str = None,
+    author_icon: str = None,
+    footer: str = None,
+    thumbnail: str = None,
+    image: str = None,
+    color: discord.Color = colors.prim,
+) -> discord.Embed:
+    embed = discord.Embed(title=title, description=description, color=color, url=url)
+    if author is not None:
+        embed.set_author(name=author, icon_url=author_icon)
+    if footer is not None:
+        embed.set_footer(text=footer)
+    if thumbnail is not None:
+        embed.set_thumbnail(url=thumbnail)
+    if image is not None:
+        embed.set_image(url=image)
+    return embed
 
 
 async def slash_check_priv(interaction: discord.Interaction, member: discord.Member):

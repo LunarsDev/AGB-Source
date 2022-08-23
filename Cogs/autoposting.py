@@ -9,6 +9,7 @@ import discord
 from discord.ext import commands, tasks
 from index import colors, config
 from Manager.logger import formatColor
+from lunarapi import Client, endpoints
 from sentry_sdk import capture_exception
 from utils import imports
 from utils.default import log
@@ -49,17 +50,6 @@ class autoposting(commands.Cog, name="ap"):
         self.config = imports.get("config.json")
         self.lunar_headers = {f"{config.lunarapi.header}": f"{config.lunarapi.token}"}
 
-    async def get_hentai_img(self) -> str:
-        other_stuff = ["jpg", "gif", "yuri", "panties", "thighs", "ass"]
-        async with aiohttp.ClientSession(headers=self.lunar_headers) as s:
-            async with s.get(
-                f"https://lunardev.group/api/nsfw/{random.choice(other_stuff)}"
-            ) as r:
-                j = await r.json()
-                url = j["url"]
-
-        return url
-
     async def send_from_webhook(
         self, webhook: discord.Webhook, embed: discord.Embed
     ) -> None:
@@ -78,15 +68,35 @@ class autoposting(commands.Cog, name="ap"):
 
     @tasks.loop(minutes=5)
     async def autoh(self):
-        await self.bot.wait_until_ready()
+        async def get_hentai_img() -> str:
+            cats = [
+                "ahegao",
+                "ass",
+                "boobs",
+                "cum",
+                "gif",
+                "hololive",
+                "jpg",
+                "neko",
+                "panties",
+                "thighs",
+                "yuri",
+            ]
+
+            async with aiohttp.ClientSession() as session:
+                client = Client(session=session, token=config.lunarapi.tokenNew)
+                img = await client.request(endpoints.nsfw(random.choice(cats)))
+                data = await img.to_dict()
+                return data["url"]
+
         from Cogs.admin import PersistentView
 
         posts = 0
         me = self.bot.get_user(101118549958877184) or await self.bot.fetch_user(
             101118549958877184
         )
-        url = await self.get_hentai_img()
-        cleaned_link = url.replace("https://lunardev.group/api/", "")
+        url = await get_hentai_img()
+        cleaned_link = url.replace("https://api.lunardev.group/", "")
         if random.randint(1, 10) == 3:
             embed = discord.Embed(
                 title="Enjoy your poggers porn lmao",
@@ -113,7 +123,7 @@ class autoposting(commands.Cog, name="ap"):
         try:
             embed.set_image(url=url)
             embed.set_footer(
-                text=f"lunardev.group | {cleaned_link}", icon_url=me.avatar
+                text=f"mc.lunardev.group 1.19.2 | {cleaned_link}", icon_url=me.avatar
             )
         except Exception as e:
             capture_exception(e)
@@ -121,7 +131,8 @@ class autoposting(commands.Cog, name="ap"):
             try:
                 embed.set_image(url=url)
                 embed.set_footer(
-                    text=f"lunardev.group | {cleaned_link}", icon_url=me.avatar
+                    text=f"mc.lunardev.group 1.19.2 | {cleaned_link}",
+                    icon_url=me.avatar,
                 )
             except Exception as e:
                 capture_exception(e)
@@ -130,7 +141,8 @@ class autoposting(commands.Cog, name="ap"):
                 try:
                     embed.set_image(url=url)
                     embed.set_footer(
-                        text=f"lunardev.group | {cleaned_link}", icon_url=me.avatar
+                        text=f"mc.lunardev.group 1.19.2 | {cleaned_link}",
+                        icon_url=me.avatar,
                     )
                 except Exception as e:
                     capture_exception(e)
@@ -159,9 +171,10 @@ class autoposting(commands.Cog, name="ap"):
 
                 # remove channel from db if it's not a NSFW channel
                 if not channel.is_nsfw():
-                    await self.bot.db.execute(
-                        "DELETE FROM guilds WHERE hentaichannel = $1", str(channel_id)
-                    )
+                    await self.bot.db.remove_autoposting(channel.guild.id)
+                    # await self.bot.db.execute(
+                    #     "DELETE FROM guilds WHERE hentaichannel = $1", str(channel_id)
+                    # )
                     # log it
                     log(
                         f"AutoPosting - {channel.guild.id} is no longer NSFW, so I have removed the channel from the database."
@@ -204,7 +217,9 @@ class autoposting(commands.Cog, name="ap"):
                     # send our message
                     # try sending to the channel first
                     if isinstance(final_messagable, discord.TextChannel):
-                        await final_messagable.send(embed=embed, view=PersistentView())
+                        await final_messagable.send(
+                            embed=embed, view=PersistentView(commands.Context)
+                        )
                     else:
                         await self.send_from_webhook(final_messagable, embed)
                     await asyncio.sleep(0.5)
@@ -236,6 +251,11 @@ class autoposting(commands.Cog, name="ap"):
                 log("Autoposting - No posts were made. Reloading the cog.")
                 await self.bot.reload_extension("Cogs.autoposting")
                 return
+
+    @autoh.before_loop
+    async def delay_task_until_bot_ready(self):
+        await self.bot.wait_until_ready()
+        await asyncio.sleep(5)
 
     async def cog_unload(self) -> None:
         self.autoh.stop()

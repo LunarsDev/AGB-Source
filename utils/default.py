@@ -11,6 +11,7 @@ from collections import namedtuple
 from io import BytesIO
 from typing import Iterator, Sequence
 
+
 import discord
 import requests
 import timeago as timesince
