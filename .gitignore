@@ -1,5 +1,17 @@
+# Ignore various information sensitive json configs
 config.json
 db_config.json
-__pycache__/
-.env
+
+# Ignoring blacklist to avoid blacklisting random people
 blacklist.json
+
+# Ignore __pycache__ as well
+__pycache__/*
+
+# And python bytecode files, if they somehow appear outside of __pycache__
+*.pyc
+*.pyo
+*.pyd
+
+# Ignoring env files so it wont cause any issues with other environment files
+.env
