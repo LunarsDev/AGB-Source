@@ -122,9 +122,7 @@ class Error(commands.Cog, name="error"):
     async def on_command_error(self, ctx, error):
         if isinstance(error, self.dont_catch):
             return
-        elif isinstance(error, self.errors):
-            await self.create_embed(ctx, error)
-            return
+
         # if error not in self.errors:
         self.bot.traceback = (
             f"Exception in command '{ctx.command.qualified_name}'\n"
@@ -132,7 +130,10 @@ class Error(commands.Cog, name="error"):
                 traceback.format_exception(type(error), error, error.__traceback__)
             )
         )
-        bruh = await self.bot.fetch_channel(1008520820332695582)
+        bruh = await self.bot.get_channel(1008520820332695582)
+        if bruh is None:
+            bruh = await self.bot.fetch_channel(1008520820332695582)
+
         caller = self.tracebackfunc(ctx)
         await bruh.send(embed=caller)
 
@@ -142,7 +143,7 @@ class Error(commands.Cog, name="error"):
             embed = discord.Embed(
                 title="Hey now...",
                 color=16711680,
-                description=f"You're missing a required argument.\ntry again by doing `{ctx.command.signature}`\nif you still don't understand, type `{ctx.prefix}help {ctx.command}`",
+                description=f"You're missing a required argument.\ntry again by doing `{ctx.command.signature}`\nif you still don't understand, type `{ctx.clean_prefix}help {ctx.command}`",
             )
 
             embed.set_thumbnail(url=ctx.author.avatar)
@@ -170,7 +171,7 @@ class Error(commands.Cog, name="error"):
             embed = discord.Embed(
                 title="Hey now...",
                 color=16711680,
-                description=f"This command requires a number as an argument.\nTry again by doing `{ctx.command.signature}`\nif you still don't understand, type `{ctx.prefix}help {ctx.command}`",
+                description=f"This command requires a number as an argument.\nTry again by doing `{ctx.command.signature}`\nif you still don't understand, type `{ctx.clean_prefix}help {ctx.command}`",
             )
 
             embed.set_thumbnail(url=self.bot.user.avatar)
@@ -277,6 +278,8 @@ class Error(commands.Cog, name="error"):
                     f"{ctx.author} is trying to get AGB to say racist things"
                 )
                 return
+            elif isinstance(error, self.errors):
+                return await self.create_embed(ctx, error)
             else:
                 embed = discord.Embed(
                     title="Error", colour=16711680, timestamp=ctx.message.created_at
