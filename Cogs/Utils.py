@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Dict, Union
 
-from discord import Embed
+from utils.embeds import EmbedMaker as Embed
 from discord.ext import commands
 from index import colors
 

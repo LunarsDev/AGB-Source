@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent
+import contextlib
 import datetime
 import importlib
 import inspect
@@ -22,12 +23,13 @@ import discord
 import httpx
 import speedtest
 from discord.ext import commands
-from index import colors, delay, logger, EmbedMaker
+from index import colors, delay
 from Manager.database import Connection
 from Manager.logger import formatColor
 from Manager.objects import Table
 from sentry_sdk import capture_exception
 from utils import default, imports, permissions
+from utils.embeds import EmbedMaker as Embed
 from utils.default import log
 from utils.errors import BlacklistedUser
 
@@ -53,8 +55,7 @@ class EvalContext:
 
 
 class EvalModal(discord.ui.Modal, title="Evaluate Code"):
-    body = discord.ui.TextInput(
-        label="Code", style=discord.TextStyle.paragraph)
+    body = discord.ui.TextInput(label="Code", style=discord.TextStyle.paragraph)
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer()
@@ -255,8 +256,7 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
 
         bot.add_check(self.blacklist_check)
         self.nword_re = r"\b(n|m|и|й){1,32}(i|1|l|!|ᴉ|¡){1,32}((g|ƃ|6|б{2,32}|q){1,32}|[gqgƃ6б]{2,32})(a|e|3|з|u)(r|Я|s|5|$){1,32}\b"
-        self.nword_re_comp = re.compile(
-            self.nword_re, re.IGNORECASE | re.UNICODE)
+        self.nword_re_comp = re.compile(self.nword_re, re.IGNORECASE | re.UNICODE)
         self.afks = {}
 
         self.errors = (
@@ -274,6 +274,16 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
             discord.HTTPException,
             commands.BadBoolArgument,
         )
+
+    async def remove_images(self, rmcode):
+        async with aiohttp.ClientSession(
+            headers={"Authorization": f"Bearer {self.config.lunarapi.tokenNew}"}
+        ) as session:
+            async with session.get(
+                f"https://api.lunardev.group/admin/apirm?password={self.config.lunarapi.adminPass}&rmcode={rmcode}"
+            ) as resp:
+                if resp.status == 200:
+                    return
 
     async def blacklist_check(self, ctx: commands.Context):
         bl = await self.bot.db.fetch_blacklist(ctx.author.id, cache=True)
@@ -311,12 +321,12 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
                 break
 
     async def add_fail_reaction(self):
-        emoji = "\u2705"
+        emoji = "❌"
         with suppress(Exception):
             await self.add_reaction(emoji)
 
     async def add_success_reaction(self):
-        emoji = "\u2705"
+        emoji = "✅"
         with suppress(Exception):
             await self.add_reaction(emoji)
 
@@ -370,7 +380,9 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
                     cache.pop(int(user_id), None)
 
                 query = f"DELETE FROM {table} WHERE {user_id_key} = $1"
-                await self.bot.db.executemany(query, [str(user_id) for user_id in user_ids])
+                await self.bot.db.executemany(
+                    query, [str(user_id) for user_id in user_ids]
+                )
 
         if action == "GET":
             return entries
@@ -452,8 +464,7 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
         info2 = self.bot.get_channel(776514195465568257)
         info3 = self.bot.get_channel(755722908122349599)
         guild = member.guild
-        embed = discord.Embed(title="User Joined",
-                              colour=discord.Colour.green())
+        embed = Embed(title="User Joined", colour=discord.Colour.green())
         embed.add_field(
             name=f"Welcome {member}",
             value=f"Welcome {member.mention} to {guild.name}!\nPlease read <#776514195465568257> to get color roles for yourself and common questions about AGB!",
@@ -534,7 +545,7 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
     #             pass
 
     #     afks[member.id] = reason
-    #     embed = discord.Embed(title = ":zzz: AFK", description = f"{member.display_name} is AFK", color = member.color)
+    #     embed = Embed(title = ":zzz: AFK", description = f"{member.display_name} is AFK", color = member.color)
     #     embed.set_thumbnail(url = member.avatar)
     #     embed.set_author(name = self.bot.user.name, icon_url = self.bot.user.avatar)
     #     embed.add_field(name = "Note", value = reason)
@@ -551,8 +562,7 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
             else:
                 return False
 
-        embed = discord.Embed(title="API Token Gen",
-                              colour=discord.Colour.green())
+        embed = Embed(title="API Token Gen", colour=discord.Colour.green())
 
         async def api_send_email(email, username, token):
             async with aiohttp.ClientSession(
@@ -580,8 +590,7 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
             await api_db.create_connection()
 
             username = email.partition("@")[0]
-            p = check_output(
-                ["node", "../lunar-api/genToken.js", f"--u={email}"])
+            p = check_output(["node", "../lunar-api/genToken.js", f"--u={email}"])
             token = str(p, "utf-8")
 
             await api_db.execute(f"SELECT * FROM users WHERE email = '{email}'")
@@ -590,8 +599,7 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
             )
             await api_db.close()
 
-            embed.add_field(
-                name=f"Token for `{email}`", value=f"```{token}```")
+            embed.add_field(name=f"Token for `{email}`", value=f"```{token}```")
             embed.add_field(
                 name=f"User Created [{username}]",
                 value="Successfully created and added the user to the API Database!",
@@ -601,8 +609,7 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
             # Send Email VIA http POST Request
             await api_send_email(email, username, token)
         else:
-            embed.add_field(
-                name="Error", value="Invalid email. `Expected: *@*.*`")
+            embed.add_field(name="Error", value="Invalid email. `Expected: *@*.*`")
             await ctx.send(embed=embed)
             return
 
@@ -647,9 +654,8 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
         row_count = len(self.bot.db._statuses)
         status = status.strip().replace("'", "")
         new_status = await self.bot.db.add_status(row_count, status)
-        embed = discord.Embed(color=colors.prim)
-        embed.set_author(name=self.bot.user.name,
-                         icon_url=self.bot.user.avatar)
+        embed = Embed(color=colors.prim)
+        embed.set_author(name=self.bot.user.name, icon_url=self.bot.user.avatar)
         embed.add_field(
             name="Status",
             value=f"Added status to db:\n```\n{new_status.status}```",
@@ -779,8 +785,7 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
             stdout = stdout.decode()
             addendum = "\n\n**Warning: no upstream branch is set.  I automatically pulled from origin/main but this may be wrong.  To remove this message and make it dynamic, please run `git branch --set-upstream-to=origin/<branch> <branch>`**"
 
-        embed = discord.Embed(
-            title="Git pull", description="", color=colors.prim)
+        embed = Embed(title="Git pull", description="", color=colors.prim)
         if "Fast-forward" not in stdout:
             if "Already up to date." in stdout:
                 embed.description = "Code is up to date."
@@ -813,7 +818,7 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
         stdout, stderr = await proc.communicate()
         stdout = stdout.decode()
         log(stdout)
-        await EmbedMaker(title="Git fix", description=f"```py\n{stdout}```").send(ctx)
+        await Embed(title="Git fix", description=f"```py\n{stdout}```").send(ctx)
 
     @owner.command()
     @commands.check(permissions.is_owner)
@@ -912,7 +917,7 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
             message_up = f"**{results_dict['upload'] / 1_000_000:.2f}** mbps"
             title = "NetSpeed Results"
             color = discord.Color.green()
-        embed = discord.Embed(title=title, color=color)
+        embed = Embed(title=title, color=color)
         embed.add_field(name="Ping", value=message_ping)
         embed.add_field(name="Download", value=message_down)
         embed.add_field(name="Upload", value=message_up)
@@ -938,7 +943,7 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
         db_user = await self.bot.db.fetch_blacklist(user.id)
         if not db_user or db_user is None:
             await self.bot.db.add_temp_blacklist(user.id, blacklisted=True, days=days)
-            await EmbedMaker(
+            await Embed(
                 title="Temporary Blacklist",
                 description=f"{user.id} was not in the database!\nThey have been added and blacklisted for {days} days.",
             ).send(ctx)
@@ -948,24 +953,24 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
             # ) # Exchanged for modify, leaving it for archival and reverting purposes
 
             await db_user.modify(blacklisted=True, blacklistedtill=days, reason=reason)
-            await EmbedMaker(
+            await Embed(
                 title="Temporary Blacklist",
                 description=f"{user.id} has been blacklisted for {days} days.",
             ).send(ctx)
         if not silent:
             try:
                 if reason is not None:
-                    e = EmbedMaker(
+                    e = Embed(
                         title="Temporary Blacklist",
                         description=f"You have been temporarily blacklisted from using the bot for the following reason\n{reason}.\n\nThis blacklist lasts for {days} days unless you can email us a good reason why you should be whitelisted - `contact@lunardev.group`",
                     )
                 await user.send(embed=e)
-                await EmbedMaker(
+                await Embed(
                     title="Blacklist DM",
                     description="The user has been notified of their blacklist.",
                 ).send(ctx)
             except:
-                await EmbedMaker(
+                await Embed(
                     title="Blacklist DM",
                     description="I was unable to DM the user, they have still been blacklisted.",
                 ).send(ctx)
@@ -989,7 +994,7 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
 
         if not db_user or db_user is None:
             await self.bot.db.add_blacklist(user.id, blacklisted=True)
-            await EmbedMaker(
+            await Embed(
                 title="Blacklist",
                 description=f"{user.id} was not in the database!\nThey have been added and blacklisted.",
             )
@@ -999,24 +1004,24 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
             # ) # Exchanged for modify, leaving it for archival and reverting purposes
 
             await db_user.modify(blacklisted=True, reason=reason)
-            await EmbedMaker(
+            await Embed(
                 title="Permanent Blacklist",
                 description=f"{user.id} has been blacklisted.",
             ).send(ctx)
         try:
             if reason is not None:
                 await user.send(
-                    embed=EmbedMaker(
+                    embed=Embed(
                         title="Blacklist",
                         description=f"You have been blacklisted from using the bot for the following reason\n{reason}.\n\n If you believe this is a mistake, please email us - `contact@lunardev.group`",
                     )
                 )
-            await EmbedMaker(
+            await Embed(
                 title="Blacklist DM",
                 description="The user has been notified of their blacklist.",
             ).send(ctx)
         except:
-            await EmbedMaker(
+            await Embed(
                 title="Blacklist DM",
                 description="I was unable to DM the user, they have still been blacklisted.",
             ).send(ctx)
@@ -1082,7 +1087,7 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
         # stdout = io.StringIO()
         # to_compile = f'async def func():\n{textwrap.indent(body, "  ")}'
 
-        # embed = discord.Embed(title="Evaluation", colour=colors.prim)
+        # embed = Embed(title="Evaluation", colour=colors.prim)
 
         # try:
         #     exec(to_compile, env)
@@ -1198,6 +1203,7 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
     @owner.command()
     @commands.check(permissions.is_owner)
     async def load(self, ctx, *, names: str):
+        names = names.split(" ")
         for name in names:
             try:
                 await self.bot.load_extension(f"Cogs.{name}")
@@ -1225,6 +1231,7 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
     @owner.command()
     @commands.check(permissions.is_owner)
     async def unload(self, ctx, *, names: str):
+        names = names.split(" ")
         for name in names:
             try:
                 await self.bot.unload_extension(f"Cogs.{name}")
@@ -1356,22 +1363,21 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
     @owner.command()
     @commands.check(permissions.is_owner)
     async def apirm(self, ctx, *, rmcodes: str):
+        with contextlib.suppress(Exception):
+            await ctx.message.delete()
         rmcodes = rmcodes.split(" ")
         apiUrlReg = "https://api.lunardev.group/"
         imgId = (elem.replace(apiUrlReg, "") for elem in rmcodes)
         for rmcode in imgId:
-            logger.info(
-                f"{formatColor('[API]', 'yellow')} Removing {rmcode} from the API!"
-            )
-            # check if the rmcode is the hentai file
-            os.system(
-                f"cd ~/LunarDev/lunar-api/assets && sudo rm -rf hentai/{rmcode}")
+            await self.remove_images(rmcode)
         if len(rmcodes) == 1:
             await ctx.send(f"Removed `{rmcode}` from the API.", delete_after=delay)
             return
         await ctx.send(
-            f"removed the following\n"
-            + "\n".join(f"**{rmcode}**" for rmcode in rmcodes),
+            (
+                f"removed the following\n"
+                + "\n".join(f"**{rmcode}**" for rmcode in rmcodes)
+            ),
             delete_after=delay,
         )
 
@@ -1403,15 +1409,15 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
             )
         with suppress(Exception):
             await ctx.message.delete()
-        e = EmbedMaker(
+        e = Embed(
             title=f"New message From {ctx.author.name} | {self.bot.user.name} DEV",
             description=message,
             footer="To contact me, just DM the bot",
         )
-        e2 = EmbedMaker(
+        e2 = Embed(
             title=f"New message to {user}",
             description=message,
-            footer=f"tp!dm {user.id}",
+            footer=f"tp!owner dm {user.id}",
         )
         # check if the command was ran in the log channel
         log_dm = self.bot.get_channel(986079167944749057)
@@ -1428,34 +1434,6 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
                 await log_dm.send(embed=e2)
             except Exception as e:
                 await ctx.send(f"Cannot dm user. | {e}")
-
-    @commands.command()
-    @commands.check(permissions.is_owner)
-    async def traceback(self, ctx):
-        if not ctx.bot.traceback:
-            await ctx.send("No exception has occurred yet.")
-            return
-        public = True
-
-        def paginate(text: str):
-            """Simple generator that paginates text."""
-            last = 0
-            pages = []
-            for curr in range(len(text)):
-                if curr % 1980 == 0:
-                    pages.append(text[last:curr])
-                    last = curr
-                    appd_index = curr
-            if appd_index != len(text) - 1:
-                pages.append(text[last:curr])
-            return list(filter(lambda a: a != "", pages))
-
-        destination = ctx.channel if public else ctx.author
-        for page in paginate(ctx.bot.traceback):
-            embed = discord.Embed(
-                title="Error Traceback", description=f"```py\n{page}```"
-            )
-            await destination.send(embed=embed)
 
     @commands.hybrid_group(case_insensitive=True)
     @discord.app_commands.guilds(OS)

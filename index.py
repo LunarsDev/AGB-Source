@@ -1,31 +1,27 @@
 import asyncio
 import logging
 import os
-import time
 import random
-from datetime import datetime
-from typing import Any, Optional, Union
+from datetime import datetime, timezone
 
 import discord
 import sentry_sdk
-from sentry_sdk.integrations.logging import LoggingIntegration
-from sentry_sdk.integrations.aiohttp import AioHttpIntegration
-from sentry_sdk.integrations.threading import ThreadingIntegration
-from sentry_sdk.integrations.modules import ModulesIntegration
 from colorama import Fore, Style, init
 from discord import Interaction, app_commands
 from discord.ext import commands
+from sentry_sdk.integrations.aiohttp import AioHttpIntegration
+from sentry_sdk.integrations.logging import LoggingIntegration
+from sentry_sdk.integrations.modules import ModulesIntegration
+from sentry_sdk.integrations.threading import ThreadingIntegration
 
 from Manager.database import Database
 from Manager.logger import formatColor
-from datetime import timezone
 from utils import imports, permissions
+from utils.embeds import EmbedMaker as Embed
 from utils.errors import DatabaseError, DisabledCommand
-
 
 # Set timezone
 os.environ["TZ"] = "America/New_York"
-time.tzset()
 
 try:
     import uvloop  # type: ignore
@@ -58,6 +54,7 @@ Error = 0xE20000
 TOP_GG_TOKEN = config.topgg
 DEV = config.dev
 Website = "https://lunardev.group"
+Logo = "https://lunardev.group/assets/logo.png"
 Server = "https://discord.gg/cNRNeaX"
 Vote = "https://top.gg/bot/723726581864071178/vote"
 Invite = "https://discord.com/api/oauth2/authorize?client_id=723726581864071178&permissions=2083908950&scope=bot"
@@ -114,7 +111,7 @@ slash_errors = (
 
 # async def create_slash_embed(self, interaction, error):
 #     await interaction.response.defer(ephemeral=True, thinking=True)
-#     embed = discord.Embed(title="Error", colour=0xFF0000)
+#     embed = Embed(title="Error", colour=0xFF0000)
 #     embed.add_field(name="Author", value=interaction.user.mention)True
 async def update_command_usages(interaction: Interaction) -> bool:
     bot: Bot = interaction.client  # type: ignore # shut
@@ -158,8 +155,7 @@ class AGBTree(app_commands.CommandTree):
 
 
 # Don't touch this.
-sentry_logging = LoggingIntegration(
-    level=logging.INFO, event_level=logging.ERROR)
+sentry_logging = LoggingIntegration(level=logging.INFO, event_level=logging.ERROR)
 sentry_sdk.init(
     config.sentryDSN,
     integrations=[
@@ -202,12 +198,11 @@ class Bot(commands.AutoShardedBot):
 
         self.db: Database = Database(self, db_config)
         self.add_check(self.global_commands_check)
-        self.traceback = None
 
     async def setup_hook(self):
-        await self.db.initate_database(chunk=True)
-        from utils.default import log
+        await self.db.initate_database(chunk=False)
         from Cogs.admin import PersistentView
+        from utils.default import log
 
         self.add_view(PersistentView(self))
         # self.add_view(AutopostingReport(self))
@@ -230,7 +225,6 @@ class Bot(commands.AutoShardedBot):
 
     async def close_func(self):
         logger.info("Closing bot...")
-        await self.session.close()  # type: ignore
         await super().close()
         await self.db.close()
 
@@ -245,14 +239,13 @@ class Bot(commands.AutoShardedBot):
         #     ) # Thanks Soheab, but im fixing things?
 
         if msg.content.lower().startswith("tp!"):
-            msg.content = msg.content[: len(
-                "tp!")].lower() + msg.content[len("tp!"):]
+            msg.content = msg.content[: len("tp!")].lower() + msg.content[len("tp!") :]
         if bot.user in msg.mentions:
             current_guild_info = self.db.get_guild(
                 msg.guild.id
             ) or await self.db.fetch_guild(msg.guild.id)
             if current_guild_info:
-                embed = discord.Embed(
+                embed = Embed(
                     title="Hi! My name is AGB!",
                     url=Website,
                     colour=colors.prim,
@@ -371,89 +364,6 @@ class colors:
     darker_grey = 0x546E7A
     blurple = 0x7289DA
     greyple = 0x99AAB5
-
-
-TwoValues = Union[
-    Optional[str],  # name/text = str or None
-    tuple[Optional[str]],  # name/text = (str or None, )
-    tuple[
-        Optional[str], Optional[str]
-    ],  # (str or None (name/text), str or None (icon_url))
-]
-
-
-class EmbedMaker(discord.Embed):
-    def __init__(
-        self,
-        *,
-        color: Optional[Union[int, discord.Colour]] = None,
-        title: Optional[Any] = None,
-        url: Optional[Any] = None,
-        description: Optional[Any] = None,
-        timestamp: Optional[datetime] = None,
-        author: Optional[TwoValues] = None,
-        footer: Optional[TwoValues] = None,
-        thumbnail: Optional[str] = None,
-        image: Optional[str] = None,
-    ) -> None:
-        if url is None:
-            url = Website
-        if color is None:
-            color = colors.prim
-
-        super().__init__(
-            title=title,
-            url=url,
-            description=description,
-            timestamp=timestamp,
-            color=color,
-        )
-
-        if thumbnail is not None:
-            self.set_thumbnail(url=thumbnail)
-        if image is not None:
-            self.set_image(url=image)
-
-        self._maybe_footer(footer)
-        self._maybe_author(author)
-
-    async def __call__(
-        self,
-        destination: discord.abc.Messageable,
-        content: Optional[str] = None,
-        **kwargs,
-    ) -> discord.Message:
-        return await self.send(destination, content, **kwargs)
-
-    async def send(
-        self,
-        destination: discord.abc.Messageable,
-        content: Optional[str] = None,
-        **kwargs,
-    ) -> discord.Message:
-        return await destination.send(content=content, embed=self, **kwargs)
-
-    @staticmethod
-    def __parse_values(value: TwoValues) -> tuple[Optional[str], Optional[str]]:
-        if isinstance(value, str):
-            return value, None
-        elif isinstance(value, tuple):
-            if len(value) == 1:
-                return value[0], None
-            elif len(value) == 2:
-                return value[0], value[1]
-            return None, None
-        else:
-            return None, None
-
-    def _maybe_footer(self, value: TwoValues) -> None:
-        text, icon_url = self.__parse_values(value)
-        self.set_footer(text=text, icon_url=icon_url)
-
-    def _maybe_author(self, value: TwoValues) -> None:
-        name, icon_url = self.__parse_values(value)
-        if name:
-            self.set_author(name=name, icon_url=icon_url)
 
 
 if __name__ == "__main__":

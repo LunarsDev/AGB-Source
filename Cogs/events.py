@@ -2,25 +2,25 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import datetime
 import os
-import random
 from typing import TYPE_CHECKING
 
-from Manager.emoji import Emoji
-import aiohttp
 
 # import cronitor
 import discord
-from discord.ext import commands, tasks
-from index import DEV, colors
+import re
+from discord.ext import commands
+from index import DEV
 from Manager.logger import formatColor
 from sentry_sdk import capture_exception
 from utils import imports
 from utils.default import add_one, log
+from utils.embeds import EmbedMaker as Embed
 
 if TYPE_CHECKING:
     from index import Bot
+
+USER_ID_REG = re.compile("[0-9]{15,19}")
 
 
 class events(commands.Cog):
@@ -61,120 +61,6 @@ class events(commands.Cog):
             )
         log(f"Discord Python Version: {formatColor(f'{discord_version}', 'green')}")
 
-    # Check for expired Blacklists
-    # @tasks.loop(count=None, minutes=1)
-    # @tasks.loop(count=None, minutes=15)
-    @tasks.loop(count=None, time=[datetime.time(hour=h, minute=0) for h in range(24)])
-    async def blacklist_sweep(self):
-        changes = 0
-        checked = 0
-        total_users = 0
-        channel = await self.bot.fetch_channel(1004423443833442335)
-        start_embed = discord.Embed(
-            title=f"{Emoji.loading} Blackist checks started",
-            color=colors.prim,
-        )
-        await channel.send(embed=start_embed)
-
-        # blacklisted_users = await self.bot.db.fetch_blacklists()
-        rows = await self.bot.db.fetch(
-            "SELECT * FROM blacklist WHERE blacklisted = 'true'"
-        )
-        total_users = len(rows)
-        data = [dict(row) for row in rows]
-        for user in data:
-            checked += 1
-            db_user = await self.bot.db.fetch_blacklist(user["userid"])
-
-            if not user:
-                continue
-
-            if not db_user:
-                continue
-
-            if not db_user.blacklistedtill:
-                continue
-
-            if not db_user.blacklisted:
-                continue
-
-            now = datetime.datetime.now()
-            try:
-                blacklist_date = datetime.datetime.strptime(
-                    str(db_user.blacklistedtill), "%Y-%m-%d %H:%M:%S.%f"
-                )
-            except Exception:
-                blacklist_date = datetime.datetime.strptime(
-                    str(db_user.blacklistedtill), "%Y-%m-%d %H:%M:%S.%f+00"
-                )
-            if blacklist_date < now:
-                await self.bot.db.execute(
-                    f"UPDATE blacklist SET blacklisted = 'false', blacklistedtill = NULL WHERE userid = '{db_user.user_id}'"
-                )
-                changes += 1
-                clear_embed = discord.Embed(
-                    title=f"{Emoji.pencil} Blacklist cleared",
-                    description=f"*Cleared blacklist on user: `{db_user.user_id}`*",
-                    color=colors.green,
-                )
-
-                # await channel.send(embed=clear_embed) # Don't send this. It'll cause problems
-
-        await asyncio.sleep(3)
-        comp_embed = discord.Embed(
-            title=f"{Emoji.yes} Blacklist checks completed",
-            description=f"*Checked: `{checked}/{total_users}`*\n*Cleared: `{changes}`*",
-            color=colors.green,
-        )
-
-        comp_embed.set_footer(text=f"Scanned {total_users} total entries!")
-        await channel.send(embed=comp_embed)
-
-    @tasks.loop(count=None, time=[datetime.time(hour=h, minute=0) for h in range(24)])
-    async def presence_loop(self):
-        if datetime.datetime.now().month == 10 and datetime.datetime.now().day == 3:
-            await self.bot.change_presence(
-                activity=discord.Game(name="Happy birthday Motz!")
-            )
-            return
-
-        statues = self.bot.db._statuses or await self.bot.db.fetch_statuses()
-        status_id = random.randint(0, len(statues) - 1)
-
-        status_from_id = self.bot.db.get_status(
-            status_id
-        ) or await self.bot.db.fetch_status(status_id, cache=True)
-        if not status_from_id:
-            # should never happen but handling it for linter purposes
-            log(f"Status {status_id} not found in database!")
-            self.presence_loop.restart()
-            return
-
-        db_status = status_from_id.status
-        server_count = db_status.replace("{server_count}", str(len(self.bot.guilds)))
-        status = server_count.replace("{command_count}", str(len(self.bot.commands)))
-
-        if DEV:
-            await self.bot.change_presence(
-                activity=discord.Activity(
-                    type=discord.ActivityType.playing, name="AGB Beta <3"
-                )
-            )
-        else:
-            await self.bot.change_presence(
-                activity=discord.Activity(
-                    type=discord.ActivityType.playing, name=status
-                )
-            )
-
-    @presence_loop.before_loop
-    async def delay_task_until_bot_ready(self):
-        await asyncio.sleep(5)
-
-    @blacklist_sweep.before_loop
-    async def delay_task_until_bot_ready(self):
-        await asyncio.sleep(5)
-
     @commands.Cog.listener(name="on_message")
     async def add(self, message):
         if message.guild is None:
@@ -192,42 +78,33 @@ class events(commands.Cog):
             else:
                 await message.channel.send("Please enter a number")
 
-    # make an event to update channels with the bots server count
-    @tasks.loop(count=None, minutes=15)
-    async def update_stats(self):
-        if not DEV:
-            update_guild_count = self.bot.get_channel(968617760756203531)
-            update_user_count = self.bot.get_channel(968617853886550056)
-            if len(self.bot.guilds) != self.last_guild_count:
-                await update_guild_count.edit(
-                    name=f"Server Count: {len(self.bot.guilds)}"
-                )
-                self.last_guild_count = len(self.bot.guilds)
-            if len(self.bot.users) != self.last_user_count:
-                await update_user_count.edit(
-                    name=f"Cached Users: {len(self.bot.users)}"
-                )
-                self.last_user_count = len(self.bot.users)
-
-    @update_stats.before_loop
-    async def delay_task_until_bot_ready(self):
-        await self.bot.wait_until_ready()
-        await asyncio.sleep(5)
-
-    @tasks.loop(count=None, seconds=30)
-    async def status_page(self):
-        # Post AGB status to status page
-        if not DEV:
-            async with aiohttp.ClientSession() as s:
-                async with s.get(
-                    f"https://status.lunardev.group/api/push/8Km8kzfUfH?status=up&msg=OK&ping={round(self.bot.latency * 1000)}"
-                ) as r:
-                    await r.json()
-
-    @status_page.before_loop
-    async def delay_task_until_bot_ready(self):
-        await self.bot.wait_until_ready()
-        await asyncio.sleep(5)
+    @commands.Cog.listener(name="on_message")
+    async def agb_dm_responder(self, message):
+        if message.guild is None:
+            return
+        if message.guild.id != 975810661709922334:
+            return
+        if (
+            message.channel.id == 986079167944749057
+            and message.reference
+            and message.reference.resolved.author.bot
+        ):
+            for embed in message.reference.resolved.embeds:
+                user_id = USER_ID_REG.findall(embed.footer.text)
+            user = self.bot.get_user(user_id[0])
+            if user is None:
+                user = await self.bot.fetch_user(user_id[0])
+            e = Embed(
+                title=f"New message From {message.author.name} | {self.bot.user.name} DEV",
+                description=message.content,
+                footer="To contact me, just DM the bot",
+            )
+            try:
+                await user.send(embed=e)
+                await message.add_reaction("✅")
+            except discord.Forbidden:
+                await message.reply("I could not DM that user.")
+                await message.add_reaction("❌")
 
     # @commands.Cog.listener(name="on_message")
     # async def add_server_to_db(self, ctx):
@@ -326,7 +203,7 @@ class events(commands.Cog):
         log_channel = self.bot.get_channel(938936724535509012)
         log_server = self.bot.get_guild(755722576445046806)
         if invite.guild.id == log_server.id:
-            embed = discord.Embed(title="Invite Created", color=0x00FF00)
+            embed = Embed(title="Invite Created", color=0x00FF00)
             embed.add_field(
                 name="Invite Details",
                 value=f"Url:{invite.url}, Created:{invite.created_at}, Expires:{invite.expires_at},\nMax Age:{invite.max_age}, Max Uses:{invite.max_uses}, Temporary(?){invite.temporary},\nInviter:{invite.inviter}, Uses:{invite.uses}",
@@ -430,7 +307,7 @@ class events(commands.Cog):
     @commands.Cog.listener()
     async def on_guild_remove(self, guild):
 
-        embed = discord.Embed(title="Removed from a server.", colour=0xFF0000)
+        embed = Embed(title="Removed from a server.", colour=0xFF0000)
         try:
             embed.add_field(
                 name=":( forced to leave a server, heres their info:",
@@ -441,21 +318,19 @@ class events(commands.Cog):
             capture_exception(e)
             return
         embed.set_thumbnail(url=self.bot.user.avatar.url)
-        channel = self.bot.get_channel(769080397669072939)
+        channel = self.bot.get_channel(1012922058591707186)
         if guild.name is None:
             return
         if guild.member_count is None:
             return
         await channel.send(embed=embed)
         # Remove server from database
-        db_guild = self.bot.db.get_guild(
-            str(guild.id)
-        ) or await self.bot.db.fetch_guild(str(guild.id))
+        db_guild = await self.bot.db.fetch_guild(guild.id)
         if not db_guild:
             log(f"Removed from: {guild.id}")
             return
         else:
-            await self.bot.db.remove_guild(str(guild.id))
+            await self.bot.db.remove_guild(guild.id)
             log(f"Removed from: {guild.id} | Deleting database entry!")
 
     @commands.Cog.listener(name="on_guild_join")
@@ -468,7 +343,7 @@ class events(commands.Cog):
             return log(f"Unable to change nickname in {guild.id}")
         else:
             log(f"Changed nickname to {nick} in {guild.id}")
-        embed = discord.Embed(
+        embed = Embed(
             title="Oi cunt, Just got invited to another server.",
             colour=discord.Colour.green(),
         )
@@ -477,13 +352,11 @@ class events(commands.Cog):
             value=f"Server name: `{guild.name}`\n ID `{guild.id}`\n Member Count: `{guild.member_count}`.",
         )
         embed.set_thumbnail(url=self.bot.user.avatar)
-        channel = self.bot.get_channel(769075552736641115)
+        channel = self.bot.get_channel(1012922047380344894)
         await channel.send(embed=embed)
         # Add server to database
 
-        db_guild = self.bot.db.get_guild(guild.id) or await self.bot.db.fetch_guild(
-            guild.id
-        )
+        db_guild = await self.bot.db.fetch_guild(guild.id)
         if db_guild:
             log(f"New guild joined: {guild.id} | But it was already in the DB")
         else:
@@ -531,27 +404,36 @@ class events(commands.Cog):
                     f"New user detected: {formatColor(member.id, 'green')} | Added to database!"
                 )
 
-    @blacklist_sweep.before_loop
-    async def delay_task_until_bot_ready(self):
-        await self.bot.wait_until_ready()
-        await asyncio.sleep(5)
+    # @commands.Cog.listener(name="on_message")
+    # async def automod_sql(self, ctx):
+    #     if ctx.author.bot:
+    #         return
+    #     else:
+    #         pass
+    #     try:
+    #         cursor_n.execute(
+    #             f"SELECT * FROM automod WHERE guildId = {ctx.guild.id}")
+    #     except Exception:
+    #         pass
+    #     automod_rows = cursor_n.rowcount
+    #     if automod_rows == 0:
+    #         cursor_n.execute(
+    #             f"INSERT INTO automod (guildId) VALUES ({ctx.guild.id})")
+    #         mydb_n.commit()
+    #     else:
+    #         return
 
-    async def cog_unload(self) -> None:
-        self.blacklist_sweep.stop()
-        log("Blacklist Sweep - Stopped")
-        self.presence_loop.stop()
-        self.update_stats.stop()
-
-    async def cog_reload(self) -> None:
-        self.blacklist_sweep.stop()
-        log("Blacklist Sweep - Reloaded")
-
-    async def cog_load(self) -> None:
-        self.presence_loop.start()
-        self.blacklist_sweep.start()
-        self.update_stats.start()
-        self.status_page.start()
-        log("Blacklist Sweep - Started")
+    # from index import EmbedMaker, EmbedMaker, cursor_n, mydb_n
+    # for guild in self.guilds:
+    #     cursor_n.execute(f"SELECT * FROM public.guilds WHERE guildId = '{guild.id}'")
+    #     row_count = cursor_n.rowcount
+    #     if row_count == 0:
+    #         cursor_n.execute(
+    #             f"INSERT INTO public.guilds (guildId) VALUES ('{guild.id}')"
+    #         )
+    #         mydb_n.commit()
+    #         print(f"{guild.id} | Added to database!")
+    # testing, ignore this
 
 
 async def setup(bot: Bot) -> None:

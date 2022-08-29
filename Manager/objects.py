@@ -119,7 +119,12 @@ class Base:
 
     def __int__(self) -> int:
         possible_int_keys = ("id", "user_id", "guild_id")
-        return int(getattr(self, next((key for key in possible_int_keys if key in self.data), 0)))  # type: ignore
+        # type: ignore
+        return int(
+            getattr(
+                self, next((key for key in possible_int_keys if key in self.data), 0)
+            )
+        )
 
     def __repr__(self) -> str:
         values = ", ".join(f"{key}={value!r}" for key, value in self.data.items())
@@ -264,7 +269,8 @@ class Command(Base):
         data = await self.database.fetch(query)
         for entry in data:
             guild_id = entry["guild"]
-            self.states[int(guild_id)] = entry[self.name]
+            if self.name in entry:
+                self.states[int(guild_id)] = entry[self.name]
 
     def state_in(self, guild_id: int) -> Optional[bool]:
         guild_command = self.states.get(guild_id)
@@ -481,7 +487,13 @@ class GuildBlacklist(Base):
         self.name: str = _handle_varchar(data["name"])
         self.is_blacklisted: bool = _handle_varchar(data["blacklisted"])
 
-    async def modify(self, *, where: dict[str, Any] = None, name: Optional[str] = MISSING, blacklisted: Optional[bool] = MISSING) -> GuildBlacklist:
+    async def modify(
+        self,
+        *,
+        where: dict[str, Any] = None,
+        name: Optional[str] = MISSING,
+        blacklisted: Optional[bool] = MISSING,
+    ) -> GuildBlacklist:
         if where is None:
             where = {}
         where = where or {"id": str(self.guild_id)}

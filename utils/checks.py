@@ -6,12 +6,13 @@ from typing import List, Optional
 
 import aiohttp
 import discord
-from discord import ButtonStyle, Embed, File, Interaction
+from discord import ButtonStyle, File, Interaction
 from discord.ext import commands
 from discord.ui import Button, View, button
 from index import Bot, config
 
 from utils import default
+from utils.embeds import EmbedMaker as Embed
 from utils.default import log
 
 owners = default.get("config.json").owners

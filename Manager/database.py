@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal, Optional, Union, overload
+import contextlib
+from typing import TYPE_CHECKING, Any, Coroutine, Literal, Optional, Union, overload
 
 from asyncpg import Pool, Record, create_pool
 
@@ -10,15 +11,15 @@ from .objects import *
 
 if TYPE_CHECKING:
     from index import Bot
-
     from ._types import DBConfig
+    from asyncpg import Connection as AsyncConnection
 
 DATABASE_LOGGING_PREFIX = formatColor("[Database]", "green")
 
 
 class Connection:
 
-    __slots__: tuple[str, ...] = ("bot", "_config", "_pool")
+    __slots__: tuple[str, ...] = ("bot", "_config", "_pool", "__open_connections")
 
     def __init__(
         self,
@@ -30,11 +31,14 @@ class Connection:
         self._config = config
         self._pool: Optional[Pool] = None
 
+        self.__open_connections: list[AsyncConnection] = []
+
     @property
     def pool(self) -> Pool:
         return self._pool  # type: ignore
 
     async def create_connection(self) -> None:
+        self.__open_connections = []
         if self._pool is not None and not self._pool._closed:
             return
 
@@ -54,32 +58,48 @@ class Connection:
             f"{DATABASE_LOGGING_PREFIX} Successfully created a connection to the database."
         )
 
+    async def __get_active_connection(self) -> AsyncConnection:
+        if len(self.__open_connections) == 0:
+            return await self.pool.acquire()
+        else:
+            return self.__open_connections[0]
+
+    async def __close_connections(self, c: Optional[AsyncConnection] = None) -> None:
+        with contextlib.suppress(Exception):
+            if c and not c.is_closed():
+                await self.pool.release(c)
+                with contextlib.suppress(ValueError):
+                    self.__open_connections.remove(c)
+            for connection in self.__open_connections:
+                if connection.is_closed():
+                    self.__open_connections.remove(connection)
+
     async def execute(self, query, *args) -> Any:
-        con = await self.pool.acquire()
+        con = await self.__get_active_connection()
         try:
             return await con.execute(query, *args)
         except Exception as e:
             raise DatabaseError(e) from e
         finally:
-            await self.pool.release(con)
+            await self.__close_connections(con)
 
     async def executemany(self, query, *args) -> Any:
-        con = await self.pool.acquire()
+        con = await self.__get_active_connection()
         try:
             return await con.executemany(query, *args)
         except Exception as e:
             raise DatabaseError(e) from e
         finally:
-            await self.pool.release(con)
+            await self.__close_connections(con)
 
     async def fetch(self, query, *args) -> list[Record]:  # type: ignore
-        con = await self.pool.acquire()
+        con = await self.__get_active_connection()
         try:
             return await con.fetch(query, *args)
         except Exception as e:
             raise DatabaseError(e) from e
         finally:
-            await self.pool.release(con)
+            await self.__close_connections(con)
 
     async def fetchrow(self, query, *args) -> Optional[Record]:
         con = await self.pool.acquire()
@@ -88,7 +108,7 @@ class Connection:
         except Exception as e:
             raise DatabaseError(e) from e
         finally:
-            await self.pool.release(con)
+            await self.__close_connections(con)
 
     async def fetchval(self, query, *args) -> Optional[Any]:
         con = await self.pool.acquire()
@@ -97,7 +117,25 @@ class Connection:
         except Exception as e:
             raise DatabaseError(e) from e
         finally:
-            await self.pool.release(con)
+            await self.__close_connections(con)
+
+    async def multi_operations(
+        self,
+        *operations: Coroutine[None, None, Any],
+        # idk what I was thinking when I wrote this
+        # manually: Optional[list[tuple[Literal["execute", "fetch", "fetchrow"], tuple[str, tuple[Any, ...]]]]] = None,
+        timeout: Optional[int] = None,
+    ) -> list[Any]:
+        if not operations:
+            return []
+
+        results: list[Any] = []
+        async with self.pool.acquire(timeout=timeout) as con:
+            self.__open_connections.insert(0, con)
+            for operation in operations:
+                results.extend(await operation)
+
+            return results
 
     async def close(self) -> None:
         if self._pool is None:
@@ -105,6 +143,7 @@ class Connection:
 
         await self._pool.close()
         self._pool = None
+        self.__open_connections = []
 
 
 class Database(Connection):
@@ -529,7 +568,7 @@ class Database(Connection):
     # automod
 
     async def add_automod(
-        self, guild_id, log_channel_id: Optional[int] = None
+        self, guild_id: int, log_channel_id: Optional[int] = None
     ) -> AutoMod:
         query = f"INSERT INTO {Table.AUTOMOD} (server) VALUES ($1) RETURNING *"
         if log_channel_id is not None:
@@ -542,18 +581,20 @@ class Database(Connection):
         self._automods[guild_id] = inst
         return inst
 
-    async def remove_automod(self, guild_id) -> Optional[AutoMod]:
+    async def remove_automod(self, guild_id: int) -> Optional[AutoMod]:
         query = f"DELETE FROM {Table.AUTOMOD} WHERE server = $1"
         await self.execute(query, guild_id)
         return self._automods.pop(guild_id, None)
 
-    def get_automod(self, guild_id) -> Optional[AutoMod]:
+    def get_automod(self, guild_id: int) -> Optional[AutoMod]:
         return self._automods.get(guild_id)
 
     async def fetch_automods(self, cache: bool = False) -> list[AutoMod]:
         return await self.__fetch(Table.AUTOMOD, cache=cache)
 
-    async def fetch_automod(self, guild_id, cache: bool = False) -> Optional[AutoMod]:
+    async def fetch_automod(
+        self, guild_id: int, cache: bool = False
+    ) -> Optional[AutoMod]:
         return await self.__fetch(
             Table.AUTOMOD, cache=cache, where={"server": str(guild_id)}
         )
@@ -567,19 +608,19 @@ class Database(Connection):
         self._autopostings[guild_id] = inst
         return inst
 
-    async def remove_autoposting(self, guild_id) -> Optional[AutoPosting]:
+    async def remove_autoposting(self, guild_id: int) -> Optional[AutoPosting]:
         query = f"DELETE FROM {Table.AUTOPOSTING} WHERE guild_id = $1"
         await self.execute(query, str(guild_id))
         return self._autopostings.pop(guild_id, None)
 
-    def get_autoposting(self, guild_id) -> Optional[AutoPosting]:
+    def get_autoposting(self, guild_id: int) -> Optional[AutoPosting]:
         return self._autopostings.get(guild_id)
 
     async def fetch_autopostings(self, cache: bool = False) -> list[AutoPosting]:
         return await self.__fetch(Table.AUTOPOSTING, cache=cache)
 
     async def fetch_autoposting(
-        self, guild_id, cache: bool = False
+        self, guild_id: int, cache: bool = False
     ) -> Optional[AutoPosting]:
         return await self.__fetch(
             Table.AUTOPOSTING, cache=cache, where={"guild_id": str(guild_id)}
@@ -596,24 +637,26 @@ class Database(Connection):
         self._autoroles[role_id] = inst
         return inst
 
-    async def remove_autorole(self, role_id) -> Optional[AutoRole]:
+    async def remove_autorole(self, role_id: int) -> Optional[AutoRole]:
         query = f"DELETE FROM {Table.AUTOROLES} WHERE role = $1"
         await self.execute(query, role_id)
         return self._autoroles.pop(role_id, None)
 
-    def get_autorole(self, role_id) -> Optional[AutoRole]:
+    def get_autorole(self, role_id: int) -> Optional[AutoRole]:
         return self._autoroles.get(role_id)
 
     async def fetch_autoroles(self, cache: bool = False) -> list[AutoRole]:
         return await self.__fetch(Table.AUTOROLES, cache=cache)
 
-    async def fetch_autorole(self, role_id, cache: bool = False) -> Optional[AutoRole]:
+    async def fetch_autorole(
+        self, role_id: int, cache: bool = False
+    ) -> Optional[AutoRole]:
         return await self.__fetch(Table.AUTOROLES, cache=cache, where={"role": role_id})
 
     # badges
 
     # TODO: this doesn't look right.
-    async def add_badge(self, user_id, badge: Badges) -> Badge:
+    async def add_badge(self, user_id: int, badge: Badges) -> Badge:
         query = f"INSERT INTO {Table.BADGES} (userid, {badge.value}) VALUES ($1) RETURNING *"
         await self.fetchrow(query, str(user_id))
         inst = Badge(self, name=badge.value)
@@ -797,25 +840,27 @@ class Database(Connection):
 
     # reminders
 
-    async def add_reminder(self, user_id, length, reminder) -> Reminder:
+    async def add_reminder(self, user_id: int, length, reminder) -> Reminder:
         query = f"INSERT INTO {Table.REMINDERS} VALUES ($1, $2, $3) RETURNING *"
         data = await self.fetchrow(query, str(user_id), length, reminder)
         inst = Reminder(self, dict(data))  # type: ignore
         self._reminders[user_id] = inst
         return inst
 
-    async def remove_reminder(self, user_id) -> Optional[Reminder]:
+    async def remove_reminder(self, user_id: int) -> Optional[Reminder]:
         query = f"DELETE FROM {Table.REMINDERS} WHERE user = $1"
         await self.execute(query, str(user_id))
         return self._reminders.pop(user_id, None)
 
-    def get_reminder(self, user_id) -> Optional[Reminder]:
+    def get_reminder(self, user_id: int) -> Optional[Reminder]:
         return self._reminders.get(user_id)
 
     async def fetch_reminders(self, cache: bool = False) -> list[Reminder]:
         return await self.__fetch(Table.REMINDERS, cache=cache)
 
-    async def fetch_reminder(self, user_id, cache: bool = False) -> Optional[Reminder]:
+    async def fetch_reminder(
+        self, user_id: int, cache: bool = False
+    ) -> Optional[Reminder]:
         return await self.__fetch(
             Table.REMINDERS, cache=cache, where={"user": str(user_id)}
         )
@@ -829,10 +874,10 @@ class Database(Connection):
         self._statuses[status_id] = inst
         return inst
 
-    async def remove_status(self, status_id) -> Optional[Status]:
+    async def remove_status(self, status_id: str) -> Optional[Status]:
         query = f"DELETE FROM {Table.STATUS} WHERE id = $1"
         await self.execute(query, status_id)
-        return self._statuses.pop(status_id, None)
+        return self._statuses.pop(int(status_id), None)
 
     def get_status(self, status_id) -> Optional[Status]:
         return self._statuses.get(status_id)

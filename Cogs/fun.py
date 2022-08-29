@@ -21,9 +21,10 @@ import nekos
 import lunarapi
 import sentry_sdk
 from discord.ext import commands
-from index import BID, CHAT_API_KEY, Website, colors, config, EmbedMaker
+from index import BID, CHAT_API_KEY, Website, colors, config
 from sentry_sdk import capture_exception
 from utils import imports, permissions
+from utils.embeds import EmbedMaker as Embed
 from utils.checks import voter_only
 from utils.common_filters import filter_mass_mentions
 from utils.default import log
@@ -176,7 +177,7 @@ class Fun(commands.Cog, name="fun"):
             history.append(msg)
             history_counter += 1
             if history_counter % 250 == 0:
-                new_embed = discord.Embed(
+                new_embed = Embed(
                     title=f"Fetching messages from #{channel.name}",
                     description=f"This might take a while...\n{history_counter}/{messages} messages gathered",
                     colour=colors.prim,
@@ -369,7 +370,7 @@ class Fun(commands.Cog, name="fun"):
             return await ctx.send("Theres not enough messages to show dummy")
         message_limit = 10000
         messages = message_limit
-        embed = discord.Embed(
+        embed = Embed(
             title=f"Fetching messages from #{channel.name}",
             description="This might take a while...",
             colour=colors.prim,
@@ -434,7 +435,7 @@ class Fun(commands.Cog, name="fun"):
             return await ctx.send(
                 "There are no channels to read... How did this happen?"
             )
-        embed = discord.Embed(
+        embed = Embed(
             description="Fetching messages from the entire server this **will** take a while.",
             colour=colors.prim,
         )
@@ -443,7 +444,7 @@ class Fun(commands.Cog, name="fun"):
         )
         global_history = []
         for channel in channel_list:
-            embed = discord.Embed(
+            embed = Embed(
                 title=f"Fetching messages from #{channel.name}",
                 description="This might take a while...",
                 colour=colors.prim,
@@ -494,7 +495,7 @@ class Fun(commands.Cog, name="fun"):
                         img = await r.json()
                         img = img["url"]
                         emoji = "<a:BONK:825511960741150751>"
-                        embed = discord.Embed(
+                        embed = Embed(
                             title="Bonky bonk.",
                             color=colors.prim,
                             description=f"**{user}** gets bonked {emoji}",
@@ -622,7 +623,7 @@ class Fun(commands.Cog, name="fun"):
             "What's the most underrated (or overrated) TV show? ",
         ]
         say = random.choice(responces)
-        await EmbedMaker(
+        await Embed(
             title="Chat Revive", description=say, footer="mc.lunardev.group 1.19.2"
         ).send(ctx)
 
@@ -632,13 +633,13 @@ class Fun(commands.Cog, name="fun"):
         sides = ["**Heads**", "**Tails**"]
         randomcoin = random.choice(sides)
         if random.randint(1, 6000) == 1:
-            await EmbedMaker(
+            await Embed(
                 title="Coinflip",
                 description="**The coin landed on its side!**",
                 footer="mc.lunardev.group 1.19.2 | (You got a 1/6000 chance of getting this!)",
             )
         else:
-            await EmbedMaker(
+            await Embed(
                 title="Coinflip",
                 description=randomcoin,
                 footer="mc.lunardev.group 1.19.2",
@@ -656,7 +657,7 @@ class Fun(commands.Cog, name="fun"):
     #         return await ctx.send(
     #             "The file you tried to render was over 25 characters! Please try again!"
     #         )
-    #     embed = discord.Embed(
+    #     embed = Embed(
     #         colour=colors.prim, title=f"Rendered by {ctx.author}"
     #     ).set_image(url="attachment://supreme.png")
     #     image = discord.File(
@@ -676,7 +677,7 @@ class Fun(commands.Cog, name="fun"):
     #         return await ctx.send(
     #             "The file you tried to render was over 40 characters! Please try again!"
     # )
-    #     embed = discord.Embed(
+    #     embed = Embed(
     #         colour=colors.prim, title=f"Rendered by {ctx.author}"
     # ).set_image(url="attachment://fact.png")
     #     image = discord.File(
@@ -696,7 +697,7 @@ class Fun(commands.Cog, name="fun"):
     #         return await ctx.send(
     #             "The file you tried to render was over 40 characters! Please try again!"
     # )
-    #     embed = discord.Embed(
+    #     embed = Embed(
     #         colour=colors.prim, title=f"Rendered by {ctx.author}"
     # ).set_image(url="attachment://scroll.png")
     #     image = discord.File(
@@ -716,7 +717,7 @@ class Fun(commands.Cog, name="fun"):
     #         return await ctx.send(
     #             "The file you tried to render was over 70 characters! Please try again!"
     # )
-    #     embed = discord.Embed(
+    #     embed = Embed(
     #         colour=colors.prim, title=f"Rendered by {ctx.author}"
     # ).set_image(url="attachment://call.png")
     #     image = discord.File(
@@ -735,7 +736,7 @@ class Fun(commands.Cog, name="fun"):
     #     if not user:
     #         user = ctx.author
 
-    #     embed = discord.Embed(colour=colors.prim, title=f"{':salt:'*7}").set_image(
+    #     embed = Embed(colour=colors.prim, title=f"{':salt:'*7}").set_image(
     #         url="attachment://salty.png"
     # )
     #     embed.set_footer(
@@ -757,7 +758,7 @@ class Fun(commands.Cog, name="fun"):
     #     if not user:
     #         user = ctx.author
 
-    #     embed = discord.Embed(colour=colors.prim, title=f"Dock of shame.").set_image(
+    #     embed = Embed(colour=colors.prim, title=f"Dock of shame.").set_image(
     #         url="attachment://shame.png"
     # )
     #     embed.set_footer(
@@ -780,7 +781,7 @@ class Fun(commands.Cog, name="fun"):
     #         return await ctx.send(
     #             "The file you tried to render was over 25 characters! Please try again!"
     # )
-    #     embed = discord.Embed(
+    #     embed = Embed(
     #         colour=colors.prim, title=f"Rendered by {ctx.author}"
     # ).set_image(url="attachment://captcha.png")
     #     image = discord.File(
@@ -799,7 +800,7 @@ class Fun(commands.Cog, name="fun"):
     #     try:
     #         if len(hex) == 6:
     #             colorinf = await self.alex_api.colour(colour=hex)
-    #             embed = discord.Embed(colour=colors.prim, title=f"{colorinf.name}")
+    #             embed = Embed(colour=colors.prim, title=f"{colorinf.name}")
     #             embed.set_image(url=colorinf.image)
     #             embed.set_footer(
     #                 text=f"Rendered by {ctx.author}"
@@ -826,7 +827,7 @@ class Fun(commands.Cog, name="fun"):
     #         return await ctx.send(
     #             "One or both words for the file you tried to render were over 10 characters! Please try again."
     # )
-    #     embed = discord.Embed(
+    #     embed = Embed(
     #         colour=colors.prim, title=f"Rendered by {ctx.author}"
     # ).set_image(url="attachment://hub.png")
     #     image = discord.File(
@@ -847,7 +848,7 @@ class Fun(commands.Cog, name="fun"):
     #         return await ctx.send(
     #             "The file you tried to render was over 30 characters! Please try again!"
     # )
-    #     embed = discord.Embed(
+    #     embed = Embed(
     #         colour=colors.prim, title=f"Rendered by {ctx.author}"
     # ).set_image(url="attachment://achievment.png")
     #     image = discord.File(
@@ -868,7 +869,7 @@ class Fun(commands.Cog, name="fun"):
     #         return await ctx.send(
     #             "The file you tried to render was over 40 characters! Please try again!"
     # )
-    #     embed = discord.Embed(
+    #     embed = Embed(
     #         colour=colors.prim, title=f"Rendered by {ctx.author}"
     # ).set_image(url="attachment://challenge.png")
     #     image = discord.File(
@@ -888,7 +889,7 @@ class Fun(commands.Cog, name="fun"):
         if final == "":
             value = "Doesn't exist."
         # final = '=' * (user.id % 15)
-        await EmbedMaker(
+        await Embed(
             title="pp size",
             description=f"{user.name}'s pp size\n{value}",
             footer="mc.lunardev.group 1.19.2",
@@ -953,7 +954,7 @@ class Fun(commands.Cog, name="fun"):
 
     #     if secs == 0:
     #         return ctx.send("Hmm. Looks like you didn't provide a valid time. Please try again.")
-    #     embed = discord.Embed(
+    #     embed = Embed(
     #         colour=ctx.author.color,
     #         timestamp=ctx.message.created_at,
     #         title=f'You will be reminded in {str(secs_as_timedelta)}',
@@ -966,7 +967,7 @@ class Fun(commands.Cog, name="fun"):
     #     if reminder is not None:
     #         remind_str = f" - {reminder}"
 
-    #     remind_message = discord.Embed(
+    #     remind_message = Embed(
     #         colour=ctx.author.color,
     #         title=f'Reminder{remind_str}!'
     # )
@@ -992,7 +993,7 @@ class Fun(commands.Cog, name="fun"):
             problem = str(ctx.message.clean_content.replace(f"{ctx.prefix}math", ""))
             # If a problem isn't given
             if not problem:
-                e = discord.Embed(
+                e = Embed(
                     description="Actually put something for me to solve...",
                     color=0xFF0000,
                 )
@@ -1001,7 +1002,7 @@ class Fun(commands.Cog, name="fun"):
                 return
             #    If the user's problem is too long
             if len(problem) > 500:
-                e = discord.Embed(description="Too long, try again.", color=0x3498DB)
+                e = Embed(description="Too long, try again.", color=0x3498DB)
                 await ctx.send(embed=e)
                 return
             problem = (
@@ -1016,14 +1017,14 @@ class Fun(commands.Cog, name="fun"):
             for letter in "abcdefghijklmnopqrstuvwxyz\\_`,@~<>?|'\"{}[]":
                 # If any of those characters are in user's math
                 if letter in problem:
-                    e = discord.Embed(
+                    e = Embed(
                         description="I can only do simplistic math, adding letters and other characters doesn't work.",
                         color=0xFF0000,
                     )
                     await ctx.send(embed=e)
                     return
             #    Make embed
-            e = discord.Embed(timestamp=datetime.datetime.now(datetime.timezone.utc))
+            e = Embed(timestamp=datetime.datetime.now(datetime.timezone.utc))
             #    Make fields
             fields = [
                 ("Problem Given", problem, True),
@@ -1038,7 +1039,7 @@ class Fun(commands.Cog, name="fun"):
         except Exception as err:
             capture_exception(err)
             eventId = sentry_sdk.last_event_id()
-            errorResEmbed = discord.Embed(
+            errorResEmbed = Embed(
                 title="❌ Error!",
                 colour=colors.prim,
                 description=f"The problem couldn't be solved or an unknown error occurred! Report it to the devs :)\n\n**Join the server with your Error ID for support: {config.Server}.**",
@@ -1059,7 +1060,7 @@ class Fun(commands.Cog, name="fun"):
                         FR: France,
                         DE: Germany
         https://countrycode.org/"""
-        embed = discord.Embed(
+        embed = Embed(
             title="Covid statistics",
             colour=colors.prim,
             url=Website,
@@ -1095,7 +1096,7 @@ class Fun(commands.Cog, name="fun"):
             embed=embed,
         )
 
-    @permissions.dynamic_ownerbypass_cooldown(3, 8, commands.BucketType.user)
+    @permissions.dynamic_ownerbypass_cooldown(1, 4.5, commands.BucketType.user)
     @commands.command()
     async def chat(self, ctx, *, message: str = None):
         """New and **improved** chat bot!"""
@@ -1112,7 +1113,7 @@ class Fun(commands.Cog, name="fun"):
                             "An error occured while accessing the chat API!"
                         )
                     j = await r.json(content_type=None)
-                    await EmbedMaker(
+                    await Embed(
                         title="Chat Bot",
                         description=j["cnt"],
                         footer="mc.lunardev.group 1.19.2",
@@ -1175,9 +1176,7 @@ class Fun(commands.Cog, name="fun"):
             ):
                 result = await self.cap_change(search_msg.embeds[0].description)
         ctx.message.created_at
-        embed = discord.Embed(
-            description=result, timestamp=ctx.message.created_at, url=Website
-        )
+        embed = Embed(description=result, timestamp=ctx.message.created_at, url=Website)
         embed.colour = getattr(author, "colour", discord.Colour.default())
         embed.set_author(name=author.display_name, icon_url=author.avatar)
         embed.set_thumbnail(url="https://i.imgur.com/upItEiG.jpg")
@@ -1220,7 +1219,7 @@ class Fun(commands.Cog, name="fun"):
         user1_name_first = user1_name[: len(user1_name) // 2]
         user2_name_last = user2_name[len(user2_name) // 2 :]
         ship_name = user1_name_first + user2_name_last
-        await EmbedMaker(
+        await Embed(
             title=f"{user1} ❤ {user2}",
             description=ship_name,
             footer="mc.lunardev.group 1.19.2",
@@ -1233,7 +1232,7 @@ class Fun(commands.Cog, name="fun"):
         user1_name_first = thing1[: len(thing1) // 2]
         user2_name_last = thing2[len(thing2) // 2 :]
         ship_name = user1_name_first + user2_name_last
-        await EmbedMaker(
+        await Embed(
             title=f"{thing1} ❤ {thing2}",
             description=ship_name,
             footer="mc.lunardev.group 1.19.2",
@@ -1243,7 +1242,7 @@ class Fun(commands.Cog, name="fun"):
     @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
     async def eightball(self, ctx, *, question: commands.clean_content):
         """Ask 8ball"""
-        await EmbedMaker(
+        await Embed(
             title=f"{ctx.message.author.display_name} asked:",
             description=question,
             image=nekos.img("8ball"),
@@ -1293,13 +1292,13 @@ class Fun(commands.Cog, name="fun"):
         """Slap people"""
         user = user or ctx.author
         if user == ctx.author:
-            await EmbedMaker(
+            await Embed(
                 title="You slapped yourself",
                 image=nekos.img("slap"),
                 footer="mc.lunardev.group 1.19.2",
             ).send(ctx)
         else:
-            await EmbedMaker(
+            await Embed(
                 title=f"{ctx.message.author.display_name} slapped {user.display_name}",
                 image=nekos.img("slap"),
                 footer="mc.lunardev.group 1.19.2",
@@ -1309,7 +1308,7 @@ class Fun(commands.Cog, name="fun"):
     @commands.command(hidden=True)
     @commands.bot_has_permissions(embed_links=True)
     async def pot(self, ctx):
-        embed = discord.Embed(title="bred")
+        embed = Embed(title="bred")
         embed.add_field(
             name="How'd you find this lol",
             value="[Don't click me :flushed:](https://www.youtube.com/watch?v=MwMuEBhgNNE&ab_channel=ShelseaO%27Hanlon)",
@@ -1326,13 +1325,13 @@ class Fun(commands.Cog, name="fun"):
         """Hug people"""
         user = user or ctx.author
         if user == ctx.author:
-            await EmbedMaker(
+            await Embed(
                 title="You hugged yourself, kinda sad lol",
                 image=nekos.img("hug"),
                 footer="mc.lunardev.group 1.19.2",
             ).send(ctx)
         else:
-            await EmbedMaker(
+            await Embed(
                 title=f"{ctx.message.author.display_name} hugged {user.display_name}",
                 image=nekos.img("hug"),
                 footer="mc.lunardev.group 1.19.2",
@@ -1352,14 +1351,14 @@ class Fun(commands.Cog, name="fun"):
                 "god thats sad",
                 "get a gf",
             ]
-            await EmbedMaker(
+            await Embed(
                 title=f"You kissed yourself... {random.choice(weird)}",
                 image=nekos.img("kiss"),
                 footer="mc.lunardev.group 1.19.2",
             ).send(ctx)
         else:
             cute = ["awww", "adorable", "cute", "how sweet", "how cute"]
-            await EmbedMaker(
+            await Embed(
                 title=f"{ctx.message.author.display_name} kissed {user.display_name}... {random.choice(cute)}",
                 image=nekos.img("kiss"),
                 footer="mc.lunardev.group 1.19.2",
@@ -1372,7 +1371,7 @@ class Fun(commands.Cog, name="fun"):
     async def smug(self, ctx, *, user: MemberConverter = None):
         """Look smug"""
         user = user or ctx.author
-        await EmbedMaker(
+        await Embed(
             title=f"{user} is smug",
             image=nekos.img("smug"),
             footer="mc.lunardev.group 1.19.2",
@@ -1386,13 +1385,13 @@ class Fun(commands.Cog, name="fun"):
         """Pat people"""
         user = user or ctx.author
         if user == ctx.author:
-            await EmbedMaker(
+            await Embed(
                 title="You gave yourself a pat... kinda weird ngl",
                 image=nekos.img("pat"),
                 footer="mc.lunardev.group 1.19.2",
             ).send(ctx)
         else:
-            await EmbedMaker(
+            await Embed(
                 title=f"{ctx.author.name} gave {user.display_name} a pat",
                 image=nekos.img("pat"),
                 footer="mc.lunardev.group 1.19.2",
@@ -1406,13 +1405,13 @@ class Fun(commands.Cog, name="fun"):
         """Tickle people"""
         user = user or ctx.author
         if user == ctx.author:
-            await EmbedMaker(
+            await Embed(
                 title="You tickled yourself... kinda weird ngl",
                 image=nekos.img("tickle"),
                 footer="mc.lunardev.group 1.19.2",
             ).send(ctx)
         else:
-            await EmbedMaker(
+            await Embed(
                 title=f"{ctx.author.name} tickled {user.name}",
                 footer="mc.lunardev.group 1.19.2",
             ).send(ctx)
@@ -1452,12 +1451,12 @@ class Fun(commands.Cog, name="fun"):
             f"{user.name} inhaled a fart from {ctx.author.name} and died",
         ]
         if user == ctx.author:
-            await EmbedMaker(
+            await Embed(
                 title="You killed yourself, hope it was worth it! Now tag someone to kill them!",
                 footer="mc.lunardev.group 1.19.2",
             ).send(ctx)
         else:
-            await EmbedMaker(
+            await Embed(
                 title=random.choice(kill_msg), footer="mc.lunardev.group 1.19.2"
             ).send(ctx)
 
@@ -1489,9 +1488,7 @@ class Fun(commands.Cog, name="fun"):
             return await ctx.send(url)
         elif "https://youtube.com/" in url:
             return await ctx.send(url)
-        await EmbedMaker(title=name, image=url, footer="mc.lunardev.group 1.19.2").send(
-            ctx
-        )
+        await Embed(title=name, image=url, footer="mc.lunardev.group 1.19.2").send(ctx)
 
     @commands.guild_only()
     @commands.command()
@@ -1522,9 +1519,9 @@ class Fun(commands.Cog, name="fun"):
                 return await ctx.send(url)
             elif "https://streamable.com/" in url:
                 return
-            await EmbedMaker(
-                title=name, url=url, footer="mc.lunardev.group 1.19.2"
-            ).send(ctx)
+            await Embed(title=name, url=url, footer="mc.lunardev.group 1.19.2").send(
+                ctx
+            )
 
     @permissions.dynamic_ownerbypass_cooldown(1, 15, commands.BucketType.user)
     @commands.command()
@@ -1586,7 +1583,7 @@ class Fun(commands.Cog, name="fun"):
                 "pls no, stay out of my ass",
                 "i use discord in light mode",
                 "some animals give me boners..",
-                "rub your asshole on the carpet and smell it",
+                "no bitches?",
                 "I am a exquisite virgin",
                 "dick fart",
                 "i got diabetes from rats",
@@ -1627,75 +1624,76 @@ class Fun(commands.Cog, name="fun"):
             Most_Used_Discord_Server = f"{random.choice(Discord_Servers)}"
             async with ctx.channel.typing():
                 msg1 = await ctx.send(
-                    embed=EmbedMaker(
+                    embed=Embed(
                         description="Initializing Hack.exe... <a:discord_loading:816846352075456512>"
                     )
                 )
                 await asyncio.sleep(1)
                 await msg1.edit(
-                    embed=EmbedMaker(
+                    embed=Embed(
                         description=f"Successfully initialized Hack.exe, beginning hack on {user.name}... <a:discord_loading:816846352075456512>"
                     )
                 )
                 await asyncio.sleep(1)
                 await msg1.edit(
-                    embed=EmbedMaker(
+                    embed=Embed(
                         description=f"Logging into {user.name}'s Discord Account... <a:discord_loading:816846352075456512>"
                     )
                 )
                 await asyncio.sleep(1)
                 await msg1.edit(
-                    embed=EmbedMaker(
+                    embed=Embed(
                         description=f"<:discord:816846362267090954> Logged into {user.name}'s Discord:\nEmail Address: `{email_address}`\nPassword: `{password}`"
                     )
                 )
                 await asyncio.sleep(1)
                 await msg1.edit(
-                    embed=EmbedMaker(
+                    embed=Embed(
                         description="Fetching DMs from their friends(if there are any)... <a:discord_loading:816846352075456512>"
                     )
                 )
                 await asyncio.sleep(1)
                 await msg1.edit(
-                    embed=EmbedMaker(
+                    embed=Embed(
                         description=f"Latest DM from {user.name}: `{latest_DM}`"
                     )
                 )
                 await asyncio.sleep(1)
                 await msg1.edit(
-                    embed=EmbedMaker(
+                    embed=Embed(
                         description="Getting IP address... <a:discord_loading:816846352075456512>"
                     )
                 )
                 await asyncio.sleep(1)
                 await msg1.edit(
-                    embed=EmbedMaker(description=f"IP address found: `{ip_address}`")
+                    embed=Embed(description=f"IP address found: `{ip_address}`")
                 )
                 await asyncio.sleep(1)
                 await msg1.edit(
-                    embed=EmbedMaker(
+                    embed=Embed(
                         description="Fetching the Most Used Discord Server... <a:discord_loading:816846352075456512>"
                     )
                 )
                 await asyncio.sleep(1)
                 await msg1.edit(
-                    embed=EmbedMaker(
+                    embed=Embed(
                         description=f"Most used Discord Server in {user.name}'s Account: `{Most_Used_Discord_Server}`"
                     )
                 )
                 await asyncio.sleep(1)
                 await msg1.edit(
-                    embed=EmbedMaker(
+                    embed=Embed(
                         description="Selling data to the dark web... <a:discord_loading:816846352075456512>"
                     )
                 )
 
                 await asyncio.sleep(1)
-                await msg1.edit(embed=EmbedMaker(description="Hacking complete."))
+                await msg1.edit(embed=Embed(description="Hacking complete."))
                 await asyncio.sleep(1.5)
                 await msg1.edit(
-                    embed=EmbedMaker(
-                        description=f"{user.name} has successfully been hacked. <a:EpicTik:816846395302477824>\n\n**{user.name}**'s Data:\nDiscord Email: `{email_address}`\nDiscord Password: `{password}`\nMost used Discord Server: `{Most_Used_Discord_Server}`\nIP Address: `{ip_address}`\nLatest DM: `{latest_DM}`"
+                    embed=Embed(
+                        description=f"{user.name} has successfully been hacked. <a:EpicTik:816846395302477824>\n\n**{user.name}**'s Data:\nDiscord Email: `{email_address}`\nDiscord Password: `{password}`\nMost used Discord Server: `{Most_Used_Discord_Server}`\nIP Address: `{ip_address}`\nLatest DM: `{latest_DM}`",
+                        footer=f"Something missing? Suggest it with {ctx.prefix}suggest! ",
                     )
                 )
 
@@ -1715,7 +1713,7 @@ class Fun(commands.Cog, name="fun"):
                     if breeds
                     else "Weight Unavailable"
                 )
-                await EmbedMaker(
+                await Embed(
                     "Enjoy this doggo <3",
                     url="https://lunardev.group/",
                     description=f"**Name**\n{breeds[0]['name'] if breeds else 'Name Unavailable'}\n\n**Weight**\n{weight}",
@@ -1728,7 +1726,7 @@ class Fun(commands.Cog, name="fun"):
     @commands.bot_has_permissions(embed_links=True)
     async def cat(self, ctx):
         """Kitties!!"""
-        await EmbedMaker(
+        await Embed(
             title="Enjoy this kitty <3",
             url=Website,
             image=await self.get_kitties(),
@@ -1740,7 +1738,7 @@ class Fun(commands.Cog, name="fun"):
     @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
     async def birb(self, ctx):
         """Its really just geese"""
-        await EmbedMaker(
+        await Embed(
             title="Enjoy this birb <3",
             url=Website,
             image=nekos.img("goose"),
@@ -1780,7 +1778,7 @@ class Fun(commands.Cog, name="fun"):
             await message.delete()
         amount = len(self.channels[str(ctx.channel.id)]["reacted"])
         word = "person has" if amount == 1 else "people have"
-        await EmbedMaker(
+        await Embed(
             description=f"**{amount}** {word} paid respects to **{filter_mass_mentions(answer)}**.",
             footer="mc.lunardev.group 1.19.2",
         ).send(ctx)
@@ -1919,7 +1917,7 @@ class Fun(commands.Cog, name="fun"):
     async def reverse(self, ctx, *, text: str):
         """Reverses things"""
         t_rev = text[::-1].replace("@", "@‎").replace("&", "&‎")
-        await EmbedMaker(
+        await Embed(
             f"Reversed {text}",
             description=f"🔁 {t_rev}",
             footer="mc.lunardev.group 1.19.2",
@@ -1947,7 +1945,7 @@ class Fun(commands.Cog, name="fun"):
     async def rate(self, ctx, *, thing: commands.clean_content):
         """Rates what you want"""
         rate_amount = random.uniform(0.0, 100.0)
-        await EmbedMaker(
+        await Embed(
             description=f"I'd rate `{thing}` a **{round(rate_amount, 4)} / 100**",
             footer="mc.lunardev.group 1.19.2",
         ).send(ctx)
@@ -1968,7 +1966,7 @@ class Fun(commands.Cog, name="fun"):
             emoji = "💖"
         if hot > 75:
             emoji = "💞"
-        await EmbedMaker(
+        await Embed(
             description=f"**{user.name}** is **{hot:.2f}%** hot {emoji}",
             footer="mc.lunardev.group 1.19.2",
         ).send(ctx)
@@ -1994,7 +1992,7 @@ class Fun(commands.Cog, name="fun"):
             emoji = "<:yikes:838988155947319337>"
         if gay > 75:
             emoji = "<:stop_pls:838988169251782666>"
-        await EmbedMaker(
+        await Embed(
             description=f"**{user.name}** is **{gay:.2f}%** gay {emoji}",
             footer="mc.lunardev.group 1.19.2",
         ).send(ctx)
@@ -2017,7 +2015,7 @@ class Fun(commands.Cog, name="fun"):
             emoji = "<:yikes:838988155947319337>"
         if simp > 75:
             emoji = "<:stop_pls:838988169251782666>"
-        await EmbedMaker(
+        await Embed(
             description=f"**{user.name}** is **{simp:.2f}%** simp {emoji}",
             footer="mc.lunardev.group 1.19.2",
         ).send(ctx)
@@ -2046,7 +2044,7 @@ class Fun(commands.Cog, name="fun"):
             emoji = "<:yikes:838988155947319337>"
         if horny > 150:
             emoji = "<:stop_pls:838988169251782666>"
-        await EmbedMaker(
+        await Embed(
             description=f"**{user.name}** is **{horny:.2f}%** horny {emoji}",
             footer="mc.lunardev.group 1.19.2",
         ).send(ctx)
@@ -2056,7 +2054,7 @@ class Fun(commands.Cog, name="fun"):
         """
         Image generation commands
         """
-        await EmbedMaker(
+        await Embed(
             "Image Generation Commands",
             description="Looking for `tp!gen`? Well, these are slash commands!\nType `/gen` to get started with a list of these ones :eyes:",
             footer="mc.lunardev.group 1.19.2",

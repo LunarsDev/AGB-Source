@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import asyncio
@@ -15,6 +13,7 @@ from Cogs.admin import PersistentView
 from index import EMBED_COLOUR, colors, config
 from utils import constants as sub
 from utils import default, imports, permissions
+from utils.embeds import EmbedMaker as Embed
 from utils.checks import voter_only
 from utils.constants import (
     GOOD_EXTENSIONS,
@@ -60,9 +59,7 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
         return True
 
     async def create_embed(self, ctx, error):
-        embed = discord.Embed(
-            title="Error Caught!", color=0xFF0000, description=f"{error}"
-        )
+        embed = Embed(title="Error Caught!", color=0xFF0000, description=f"{error}")
 
         embed.set_thumbnail(url=self.bot.user.avatar)
 
@@ -276,7 +273,7 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
         image: str = None,
         footer: Optional[str] = None,
     ):
-        em = discord.Embed(color=color, title=title, description=description)
+        em = Embed(color=color, title=title, description=description)
         em.set_image(url=image)
         if footer:
             em.set_footer(text=footer)
@@ -443,7 +440,7 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
             # return await ctx.send("This command is being on.", ephemeral=True)
             url = await self.get_hentai_lunar("ass")
 
-            embed = discord.Embed(
+            embed = Embed(
                 title="Enjoy",
                 url="https://lunardev.group/",
                 description=f"[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate})",
@@ -478,7 +475,7 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
         # # return await ctx.send("This command is being on.", ephemeral=True)
         url = await self.get_hentai_lunar("panties")
 
-        embed = discord.Embed(
+        embed = Embed(
             title="Enjoy",
             url="https://lunardev.group/",
             description=f"[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate})",
@@ -512,7 +509,41 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
         url = await self.get_hentai_lunar("hololive")
         log(url)
 
-        embed = discord.Embed(
+        embed = Embed(
+            title="Enjoy",
+            url="https://lunardev.group/",
+            description=f"[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate})",
+            colour=colors.prim,
+        )
+        embed.set_image(url=url)
+        embed.set_footer(
+            text=f"mc.lunardev.group 1.19.2 |  {used_commands} commands used."
+        )
+        if ctx.interaction is None:
+            if not ctx.channel.is_nsfw():
+                # raise nsfw channel required
+                raise commands.NSFWChannelRequired(ctx.channel)
+            await ctx.send(embed=embed, view=PersistentView(commands.Context))
+            return
+        await ctx.send(
+            embed=embed, ephemeral=True, view=PersistentView(commands.Context)
+        )
+
+    @nsfw.command()
+    @voter_only()
+    @permissions.dynamic_ownerbypass_cooldown(1, 3, commands.BucketType.user)
+    async def ahegao(self, ctx):
+        """Ahegao face nsfw\nUse `tp!nsfw command` to use this command."""
+        db_user = self.bot.db.get_user(ctx.author.id) or await self.bot.db.fetch_user(
+            ctx.author.id
+        )
+        used_commands = db_user.used_commands + 1
+        await ctx.typing(ephemeral=True)
+        # return await ctx.send("This command is being on.", ephemeral=True)
+        url = await self.get_hentai_lunar("ahegao")
+        log(url)
+
+        embed = Embed(
             title="Enjoy",
             url="https://lunardev.group/",
             description=f"[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate})",
@@ -544,7 +575,7 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
         await ctx.typing(ephemeral=True)
         # return await ctx.send("This command is being on.", ephemeral=True)
         url = await self.get_hentai_lunar("neko")
-        embed = discord.Embed(
+        embed = Embed(
             title="Enjoy",
             url="https://lunardev.group/",
             description=f"[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate})",
@@ -577,7 +608,7 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
         # return await ctx.send("This command is being on.", ephemeral=True)
         url = await self.get_hentai_lunar("panties")
 
-        embed = discord.Embed(
+        embed = Embed(
             title="Enjoy",
             url="https://lunardev.group/",
             description=f"[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate})",
@@ -610,7 +641,7 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
         # return await ctx.send("This command is being on.", ephemeral=True)
         url = await self.get_hentai_lunar("thighs")
 
-        embed = discord.Embed(
+        embed = Embed(
             title="Enjoy",
             url="https://lunardev.group/",
             description=f"[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate})",
@@ -653,8 +684,6 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
             return await ctx.send(
                 "Invalid nsfw command. Please use `tp!help reddit_drawing` to see the nsfw commands."
             )
-
-# from https://github.com/PredaaA/predacogs/tree/master/nsfw 
 
     @commands.hybrid_group()
     @voter_only()

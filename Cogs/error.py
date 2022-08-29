@@ -1,353 +1,285 @@
 from __future__ import annotations
-import asyncio
+from typing import TYPE_CHECKING, Any, ClassVar, Optional, Union
 
-import contextlib
-import json
-import os
-import random
-import re
-import traceback
-from typing import TYPE_CHECKING
+from asyncio import TimeoutError
+from random import randint
 
-import discord
-import psutil
-from discord import app_commands
+from discord import Message, TextChannel
+from discord.errors import HTTPException, InteractionResponded, NotFound
 from discord.ext import commands
-from discord.ext.commands import errors
+from discord.ext.commands.cooldowns import CooldownMapping
+from discord.ext.commands.errors import (
+    BotMissingPermissions,
+    # CheckFailure,
+    CommandError,
+    CommandInvokeError,
+    CommandNotFound,
+    CommandOnCooldown,
+)
+from discord.ext.commands.errors import DisabledCommand as DisabledCommandError
+from discord.ext.commands.errors import (
+    ExtensionError,
+    HybridCommandError,
+    MaxConcurrencyReached,
+    MissingPermissions,
+    MissingRequiredArgument,
+    NotOwner,
+    NSFWChannelRequired,
+    UserInputError,
+)
+from index import config
 from Manager.logger import formatColor
-from sentry_sdk import capture_exception
+from sentry_sdk import capture_exception, last_event_id
+
+from utils.embeds import EmbedMaker as Embed
 from utils.checks import MusicGone, NotVoted
 from utils.default import log
-from utils.errors import DatabaseError, DisabledCommand
+from utils.errors import BlacklistedUser, DatabaseError, DisabledCommand
+
+# from re import compile, IGNORECASE
+# from typing import Pattern
+
 
 if TYPE_CHECKING:
+    from discord import Message
+    from discord.app_commands.checks import Cooldown
     from index import Bot
 
 
 class Error(commands.Cog, name="error"):
+    DEFAULT_COLOR: ClassVar[int] = 0xFF0000
+
     def __init__(self, bot: Bot):
         self.bot: Bot = bot
-        self.process = psutil.Process(os.getpid())
-        with open("blacklist.json") as f:
-            self.blacklist = json.load(f)
-        self.default_prefix = "tp!"
-        self.message_cooldown = commands.CooldownMapping.from_cooldown(
-            1.0, random.randint(5, 45), commands.BucketType.user
+        self.message_cooldown: CooldownMapping[Message] = CooldownMapping.from_cooldown(
+            rate=1.0, per=randint(5, 45), type=commands.BucketType.user
         )
-        self.nword_re = re.compile(
-            r"(n|m|и|й)(i|1|l|!|ᴉ|¡)(g|ƃ|6|б)(g|ƃ|6|б)(e|3|з|u)(r|Я)", re.I
+        # self.nword_re: Pattern[str] = compile(
+        #   r"(n|m|и|й)(i|1|l|!|ᴉ|¡)(g|ƃ|6|б)(g|ƃ|6|б)(e|3|з|u)(r|Я)",
+        #   IGNORECASE
+        # )
+        self.to_ignore = (
+            CommandNotFound,
+            HTTPException,
+            NotFound,
+            InteractionResponded,
+            # CheckFailure,
         )
-
-        self.errors = (
+        self.send_embed = (
+            # custom errors
             NotVoted,
             MusicGone,
             DisabledCommand,
-            # commands.HybridCommandError,
-            app_commands.MissingPermissions,
-            app_commands.BotMissingPermissions,
-            errors.BotMissingPermissions,
-            errors.MissingPermissions,
-            errors.MissingRequiredArgument,
-            errors.BadArgument,
-            errors.CommandOnCooldown,
-            errors.BadUnionArgument,
-            errors.NoPrivateMessage,
-            errors.NotOwner,
-            errors.CommandError,
-            errors.ExtensionError,
-            discord.HTTPException,
-            commands.NoPrivateMessage,
-            commands.MissingPermissions,
-            commands.BadArgument,
-            commands.ChannelNotReadable,
-            commands.MaxConcurrencyReached,
-            commands.BotMissingPermissions,
-            commands.NotOwner,
-            commands.TooManyArguments,
-            commands.MessageNotFound,
-            commands.UserInputError,
-            discord.errors.Forbidden,
-            discord.HTTPException,
-            errors.DisabledCommand,
-            commands.BadBoolArgument,
+            BlacklistedUser,
             DatabaseError,
-            asyncio.exceptions.TimeoutError,
-            commands.GuildNotFound,
+            # user input errors
+            UserInputError,
+            # extensions
+            ExtensionError,
+            # owner
+            NotOwner,
+            # others command errors
+            MaxConcurrencyReached,
+            DisabledCommandError,
+            # python error
+            TimeoutError,
         )
 
-        self.dont_catch = (
-            commands.CommandNotFound,
-            discord.HTTPException,
-            discord.errors.NotFound,
-            discord.errors.InteractionResponded,
-        )
+    def is_on_cooldown(self, message: Message) -> bool:
+        bucket: Optional[Cooldown] = self.message_cooldown.get_bucket(message)
+        retry_after = bucket and bucket.update_rate_limit()
+        return retry_after is not None
 
-    async def create_embed(self, ctx, error):
-        embed = discord.Embed(title="Error", description=error, colour=0xFF0000)
-        bucket = self.message_cooldown.get_bucket(ctx.message)
-        if retry_after := bucket.update_rate_limit():
-            return
+    async def create_embed(
+        self,
+        ctx: commands.Context,
+        error: Union[CommandError, HybridCommandError, Exception],
+    ):
+        assert ctx.command
+        emb = Embed(title="📣 Error!", description=str(error), color=self.DEFAULT_COLOR)
+        emb.set_author(
+            name=f"{ctx.author.name} | Command: {ctx.command.qualified_name}",
+            icon_url=ctx.author.display_avatar.url,
+        )
+        await self.try_send(ctx, error, emb)
+
+    def _handle_args(self, *contents: Union[Embed, Message, str]) -> dict[str, Any]:
+        kwargs = {}
+        for content in contents:
+            if isinstance(content, Embed):
+                if "embeds" in kwargs:
+                    kwargs["embeds"].append(content)
+                else:
+                    kwargs.update(embeds=[content])
+            elif isinstance(content, Message):
+                kwargs.update(content=content.content, embeds=content.embeds)
+            elif isinstance(content, str):
+                kwargs.update(content=content)
+
+        return kwargs
+
+    async def try_send(
+        self,
+        ctx: commands.Context,
+        error: Union[CommandError, HybridCommandError, Exception],
+        *args: Union[Embed, Message, str],
+        **kwargs,
+    ):
+        if args:
+            kwargs |= self._handle_args(*args)
+
         try:
-            await ctx.send(embed=embed)
+            await ctx.send(**kwargs)
         except Exception as e:
             capture_exception(e)
-            await ctx.send(
-                f"`{error}`\n***Enable embed permissions please.***",
-            )
-
-    def tracebackfunc(self, ctx):
-        public = True
-
-        def paginate(text: str):
-            """Simple generator that paginates text."""
-            last = 0
-            pages = []
-            for curr in range(len(text)):
-                if curr % 1980 == 0:
-                    pages.append(text[last:curr])
-                    last = curr
-                    appd_index = curr
-            if appd_index != len(text) - 1:
-                pages.append(text[last:curr])
-            return list(filter(lambda a: a != "", pages))
-
-        destination = ctx.channel if public else ctx.author
-        for page in paginate(ctx.bot.traceback):
-            embed = discord.Embed(
-                title="Error Traceback", description=f"```py\n{page}```"
-            )
-            return embed
+            if any(k in ["embed", "embeds"] for k in kwargs):
+                embed_perms = (
+                    ctx.channel.permissions_for(ctx.guild.me).embed_links
+                    if ctx.guild
+                    else False
+                )
+                if not embed_perms:
+                    await ctx.send(f"`{error}`\n***Enable embed permissions please.***")
 
     @commands.Cog.listener()
-    async def on_command_error(self, ctx, error):
-        if isinstance(error, self.dont_catch):
+    async def on_command_error(
+        self,
+        ctx: commands.Context,
+        error: Union[CommandError, HybridCommandError, Exception],
+    ) -> Any:
+        if isinstance(error, CommandInvokeError):
+            error = error.original
+
+        if isinstance(error, self.to_ignore):
             return
 
-        # if error not in self.errors:
-        self.bot.traceback = (
-            f"Exception in command '{ctx.command.qualified_name}'\n"
-            + "".join(
-                traceback.format_exception(type(error), error, error.__traceback__)
+        assert ctx.command, "ctx.command was None!"
+        if isinstance(error, self.send_embed):
+            await self.create_embed(ctx, error)
+            return
+
+        if self.is_on_cooldown(ctx.message):
+            return
+
+        if isinstance(error, (MissingPermissions, BotMissingPermissions)):
+            bot_or_user = "I'm" if isinstance(error, BotMissingPermissions) else "You"
+            missing_permissions = ", ".join(error.missing_permissions)
+            emb = Embed(
+                title="👮‍♂️ Permissions Error",
+                description=f"{bot_or_user} missing the following permissions:\n{missing_permissions}",
+                color=self.DEFAULT_COLOR,
             )
-        )
-        bruh = await self.bot.get_channel(1008520820332695582)
-        if bruh is None:
-            bruh = await self.bot.fetch_channel(1008520820332695582)
-
-        caller = self.tracebackfunc(ctx)
-        await bruh.send(embed=caller)
-
-        if isinstance(error, commands.MissingRequiredArgument):
-            bucket = self.message_cooldown.get_bucket(ctx.message)
-            retry_after = bucket.update_rate_limit()
-            embed = discord.Embed(
-                title="Hey now...",
-                color=16711680,
-                description=f"You're missing a required argument.\ntry again by doing `{ctx.command.signature}`\nif you still don't understand, type `{ctx.clean_prefix}help {ctx.command}`",
+            emb.set_author(
+                name=f"{ctx.author.name} | Command: {ctx.command.qualified_name}",
+                icon_url=ctx.author.display_avatar.url,
             )
-
-            embed.set_thumbnail(url=ctx.author.avatar)
-            if retry_after:
-                return
-            else:
-                await ctx.send(embed=embed)
-
-        elif isinstance(error, app_commands.BotMissingPermissions):
-            bucket = self.message_cooldown.get_bucket(ctx.message)
-            retry_after = bucket.update_rate_limit()
-            embed = discord.Embed(
-                title="Hey now...",
-                color=16711680,
-                description=f"I'm missing permissions.\nPlease enable the following permissions:\n{error.missing_permissions}",
-            )
-            embed.set_thumbnail(url=ctx.author.avatar)
-            if retry_after:
-                return
-            else:
-                await ctx.send(embed=embed)
-        elif isinstance(error, ValueError):
-            bucket = self.message_cooldown.get_bucket(ctx.message)
-            retry_after = bucket.update_rate_limit()
-            embed = discord.Embed(
-                title="Hey now...",
-                color=16711680,
-                description=f"This command requires a number as an argument.\nTry again by doing `{ctx.command.signature}`\nif you still don't understand, type `{ctx.clean_prefix}help {ctx.command}`",
+            await self.try_send(ctx, error, emb)
+        elif isinstance(error, MissingRequiredArgument):
+            assert (
+                ctx.command
+            ), "Command is None but MissingRequiredArgument was raised."
+            emb = Embed(
+                title="💬 Missing required argument!",
+                color=self.DEFAULT_COLOR,
+                description=(
+                    f"You're missing the following required argument: {error.param.name}\n"
+                    f"try again by doing `{ctx.command.signature}`\n"
+                    f"if you still don't understand, type `{ctx.prefix}help {ctx.command}`",
+                ),
             )
 
-            embed.set_thumbnail(url=self.bot.user.avatar)
-            bucket = self.message_cooldown.get_bucket(ctx.message)
-            if retry_after := bucket.update_rate_limit():
-                return
-            try:
-                await ctx.send(embed=embed)
-            except discord.errors.Forbidden:
-                await ctx.send(f"`{error}`\n***Enable embed permissions please.***")
-                return
-        elif isinstance(error, commands.CommandOnCooldown):
-            bucket = self.message_cooldown.get_bucket(ctx.message)
-            retry_after = bucket.update_rate_limit()
+            emb.set_author(
+                name=f"{ctx.author.name} | Command: {ctx.command.qualified_name}",
+                icon_url=ctx.author.display_avatar.url,
+            )
+            await self.try_send(ctx, error, emb)
+        elif isinstance(error, CommandOnCooldown):
+            assert ctx.command, "Command is None but CommandOnCooldown was raised."
             log(
                 f"{formatColor(ctx.author.name, 'gray')} tried to use {ctx.command.name} but it was on cooldown for {error.retry_after:.2f} seconds."
             )
-
             day = round(error.retry_after / 86400)
             hour = round(error.retry_after / 3600)
             minute = round(error.retry_after / 60)
-            if retry_after:
-                return
-            if day > 0:
-                await ctx.send(f"This command has a cooldown for {str(day)}day(s)")
-            elif hour > 0:
-                await ctx.send(f"This command has a cooldown for {str(hour)} hour(s)")
-            elif minute > 0:
-                await ctx.send(
-                    f"This command has a cooldown for {str(minute)} minute(s)"
-                )
-            else:
-                await ctx.send(
-                    f"This command has a cooldown for {error.retry_after:.2f} second(s)"
-                )
 
-                return
-        elif isinstance(error, commands.NSFWChannelRequired):
-            embed = discord.Embed(
-                title="Error",
+            emb = Embed(
+                title="⏱️ Cooldown!",
+                description="This command has a cooldown for ",
+                color=self.DEFAULT_COLOR,
+            )
+            assert emb.description is not None
+            emb.set_author(
+                name=f"{ctx.author.name} | Command: {ctx.command.qualified_name}",
+                icon_url=ctx.author.display_avatar.url,
+            )
+            if day > 0:
+                emb.description += f"{str(day)}day(s)"
+            elif hour > 0:
+                emb.description += f"{str(hour)} hour(s)"
+            elif minute > 0:
+                emb.description += f"{str(minute)} minute(s)"
+            else:
+                emb.description += f"{error.retry_after:.2f} second(s)"
+
+            await self.try_send(ctx, error, emb, delete_after=error.retry_after)
+        elif isinstance(error, NSFWChannelRequired):
+            emb = Embed(
+                title="🔞 NSFW Only!",
                 description="This command is for NSFW channels only!",
-                colour=16711680,
+                color=self.DEFAULT_COLOR,
                 timestamp=ctx.message.created_at,
             )
-
-            embed.set_image(url="https://i.hep.gg/hdlOo67BI.gif")
-            embed.set_thumbnail(url=ctx.message.author.avatar)
-            embed.set_author(
-                name=ctx.message.author.name, icon_url=ctx.message.author.avatar
+            emb.set_image(url="https://i.hep.gg/hdlOo67BI.gif")
+            emb.set_author(
+                name=f"{ctx.author.name} | Command: {ctx.command.qualified_name}",
+                icon_url=ctx.author.display_avatar.url,
+            )
+            await self.try_send(ctx, error, emb)
+        else:
+            capture_exception(error)
+            error_collection_channel: TextChannel = self.bot.get_channel(
+                1012190141709828237
+            )  # type: ignore
+            event_id: Optional[str] = last_event_id()
+            issue_url: Optional[str] = (
+                f"https://sentry.hep.gg/organizations/lunar-development/issues/?query={event_id}"
+                if event_id
+                else None
+            )
+            errorResEmbed = Embed(
+                title="❌ Error!",
+                color=self.DEFAULT_COLOR,
+                description=f"*An unknown error occurred!*\n\n**Join the server with your Error ID for support: {config.Server}.**",
             )
 
-            bucket = self.message_cooldown.get_bucket(ctx.message)
-            if retry_after := bucket.update_rate_limit():
-                return
-            try:
-                await ctx.send(embed=embed)
-            except discord.errors.Forbidden:
-                await ctx.send()
-                return
-        elif isinstance(error, commands.CheckFailure):
-            me1 = self.bot.get_user(101118549958877184)
-            me2 = self.bot.get_user(683530527239962627)
-            blacklisted_user = await self.bot.db.fetch_blacklist(ctx.author.id)
-            if blacklisted_user and blacklisted_user.is_blacklisted:
-                embed = discord.Embed(
-                    title="Error", colour=16711680, timestamp=ctx.message.created_at
-                )
+            errorResEmbed.set_footer(text="This error has been automatically logged.")
+            await self.try_send(
+                ctx, error, content=f"**Error ID:** `{event_id}`", embed=errorResEmbed
+            )
+            embed = Embed(
+                title=f"New Bug Submitted By {ctx.author.name}.",
+                color=self.DEFAULT_COLOR,
+            )
+            if issue_url:
+                embed.url = issue_url
+            embed.add_field(name="Event ID", value=f"`{event_id}`", inline=False)
+            embed.add_field(
+                name="Issue URL", value=f"[Click here]({issue_url})", inline=False
+            )
 
-                embed.add_field(name="Author", value=ctx.message.author.mention)
-                embed.add_field(
-                    name="Error",
-                    value=f"You've been blacklisted from using this bot for the following reason\n`{blacklisted_user.reason}`\nTo get the blacklist removed, send us an email - `contact@lunardev.group` or contact the owners directly - {me1}, {me2}",
-                )
+            embed.add_field(
+                name="ℹ️ More info:",
+                value=(
+                    f"`Command:` {ctx.command.qualified_name if ctx.command else 'N/A'}\n"
+                    f"`User ID:` {ctx.author.id}\n"
+                    f"`Channel ID:` {ctx.channel.id}\n"
+                    f"`Message ID:` {ctx.message.id}\n"
+                    f"`Guild ID:` {ctx.guild.id if ctx.guild else 'N/A'}\n"
+                ),
+            )
+            await error_collection_channel.send(embed=embed)
 
-                embed.set_thumbnail(url=ctx.message.author.avatar)
-                embed.set_footer(
-                    text="If you believe this is a mistake, contact the bot owner or the server owner."
-                )
-
-                embed.set_author(
-                    name=ctx.message.author.name, icon_url=ctx.message.author.avatar
-                )
-
-                bucket = self.message_cooldown.get_bucket(ctx.message)
-                if retry_after := bucket.update_rate_limit():
-                    return
-                with contextlib.suppress(Exception):
-                    await ctx.message.add_reaction("\u274C")
-                try:
-                    await ctx.send(embed=embed)
-                except discord.errors.Forbidden:
-                    await ctx.send(
-                        f"You don't have permission to run this command.\n***Enable embed permissions please.***"
-                    )
-
-                    with contextlib.suppress(Exception):
-                        await ctx.message.add_reaction("\u274C")
-                    return
-            elif self.nword_re.search(ctx.message.content.lower()):
-                await me1.send(
-                    f"{ctx.author} is trying to get AGB to say racist things"
-                )
-                await me2.send(
-                    f"{ctx.author} is trying to get AGB to say racist things"
-                )
-                return
-            elif isinstance(error, self.errors):
-                return await self.create_embed(ctx, error)
-            else:
-                embed = discord.Embed(
-                    title="Error", colour=16711680, timestamp=ctx.message.created_at
-                )
-
-                embed.add_field(name="Author", value=ctx.message.author.mention)
-                embed.add_field(
-                    name="Error", value="You don't have permission to run this command."
-                )
-
-                embed.set_thumbnail(url=ctx.message.author.avatar)
-                embed.set_footer(
-                    text="If you believe this is a mistake, contact the bot owner or the server owner."
-                )
-
-                embed.set_author(
-                    name=ctx.message.author.name, icon_url=ctx.message.author.avatar
-                )
-
-                bucket = self.message_cooldown.get_bucket(ctx.message)
-                if retry_after := bucket.update_rate_limit():
-                    return
-                try:
-                    await ctx.send(embed=embed)
-                except Exception as e:
-                    capture_exception(e)
-                    await ctx.send("You don't have permission to run this command.")
-                    return
-            return
-        bucket = self.message_cooldown.get_bucket(ctx.message)
-        if retry_after := bucket.update_rate_limit():
-            return
-
-        # else:
-        #     capture_exception(error)
-        #     eventId = sentry_sdk.last_event_id()
-        #     errorResEmbed = discord.Embed(
-        #         title=f"❌ Error!",
-        #         colour=colors.red,
-        #         description=f"*An unknown error occurred!*\n\n**Join the server with your Error ID for support: {config.Server}.**",
-        #     )
-        #     errorResEmbed.set_footer(text="This error has been automatically logged.")
-        #     await ctx.send(content=f"**Error ID:** `{eventId}`", embed=errorResEmbed)
-        #     # await ctx.send(
-        #     #     f"An error has occured. The error has automatically been reported and logged. Please wait until the developers work on a fix.\nJoin the support server for updates: {config.Server}",
-        #     # )
-        #     bug_channel = self.bot.get_channel(791265212429762561)
-
-        #     embed = discord.Embed(
-        #         title=f"New Bug Submitted By {ctx.author.name}.",
-        #         color=colors.red,
-        #     )
-        #     embed.add_field(name="Error", value=f"Bug ID: `{eventId}`")
-        #     embed.add_field(name="Command", value=ctx.command.name)
-        #     # check if the error was raised in DMS
-        #     if ctx.guild is None:
-        #         embed.set_footer(text="Error raised in DMS")
-        #     else:
-        #         embed.set_footer(
-        #             text=f"User *({ctx.author.id})* in {ctx.channel.id} {ctx.message.id}",
-        #             icon_url=ctx.author.avatar,
-        #         )
-        #     # check if the error is already being handled in self.errors list
-
-        #     if error in self.errors:
-        #         return
-        #     else:
-        #         await bug_channel.send(embed=embed)
+        return
 
 
 async def setup(bot: Bot) -> None:

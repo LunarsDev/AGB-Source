@@ -6,6 +6,7 @@ from discord.ext import commands
 from index import Website, colors
 
 from utils import imports
+from utils.embeds import EmbedMaker as Embed
 
 owners = imports.config()["owners"]
 mcstaff = imports.config()["mcstaff"]
@@ -68,8 +69,8 @@ def has_permissions(*, check=all, **perms):
     async def pred(ctx):
         if ctx.author.id in owners:
             return True
-        else:
-            return await check_permissions(ctx, perms, check=check)
+
+        return await commands.has_permissions(**perms).predicate(ctx)
 
     return commands.check(pred)
 
@@ -80,8 +81,8 @@ def slash_has_permissions(*, check=all, **perms):
     async def pred(interaction):
         if interaction.user.id in owners:
             return True
-        else:
-            return await slash_check_permissions(interaction, perms, check=check)
+
+        return await app_commands.checks.has_permissions(**perms).predicate(interaction)
 
     return app_commands.check(pred)
 
@@ -98,7 +99,7 @@ async def make_embed(
     image: str = None,
     color: discord.Color = colors.prim,
 ) -> discord.Embed:
-    embed = discord.Embed(title=title, description=description, color=color, url=url)
+    embed = Embed(title=title, description=description, color=color, url=url)
     if author is not None:
         embed.set_author(name=author, icon_url=author_icon)
     if footer is not None:
@@ -121,7 +122,7 @@ def return_embed(
     image: str = None,
     color: discord.Color = colors.prim,
 ) -> discord.Embed:
-    embed = discord.Embed(title=title, description=description, color=color, url=url)
+    embed = Embed(title=title, description=description, color=color, url=url)
     if author is not None:
         embed.set_author(name=author, icon_url=author_icon)
     if footer is not None:
@@ -135,30 +136,28 @@ def return_embed(
 
 async def slash_check_priv(interaction: discord.Interaction, member: discord.Member):
     """Custom (weird) way to check permissions when handling moderation commands"""
-    embed = discord.Embed(
-        title="Permission Denied", color=0xFF0000, description="No lol."
-    )
-    embed2 = discord.Embed(
+    embed = Embed(title="Permission Denied", color=0xFF0000, description="No lol.")
+    embed2 = Embed(
         title="Permission Denied",
         color=0xFF0000,
         description=f"You can't {interaction.command.name} yourself.",
     )
-    embed3 = discord.Embed(
+    embed3 = Embed(
         title="Permission Denied",
         color=0xFF0000,
         description=f"I'm not going to let you {interaction.command.name} my owner.",
     )
-    embed4 = discord.Embed(
+    embed4 = Embed(
         title="Permission Denied",
         color=0xFF0000,
         description=f"You can't {interaction.command.name} the owner of this server.",
     )
-    embed5 = discord.Embed(
+    embed5 = Embed(
         title="Permission Denied",
         color=0xFF0000,
         description=f"You can't {interaction.command.name} someone who has the same permissions as you.",
     )
-    embed6 = discord.Embed(
+    embed6 = Embed(
         title="Permission Denied",
         color=0xFF0000,
         description=f"You can't {interaction.command.name} due to the role hierarchy.",
@@ -186,30 +185,28 @@ async def slash_check_priv(interaction: discord.Interaction, member: discord.Mem
 
 async def check_priv(ctx, member, ephemeral=bool):
     """Custom (weird) way to check permissions when handling moderation commands"""
-    embed = discord.Embed(
-        title="Permission Denied", color=0xFF0000, description="No lol."
-    )
-    embed2 = discord.Embed(
+    embed = Embed(title="Permission Denied", color=0xFF0000, description="No lol.")
+    embed2 = Embed(
         title="Permission Denied",
         color=0xFF0000,
         description=f"You can't {ctx.command.name} yourself.",
     )
-    embed3 = discord.Embed(
+    embed3 = Embed(
         title="Permission Denied",
         color=0xFF0000,
         description=f"I'm not going to let you {ctx.command.name} my owner.",
     )
-    embed4 = discord.Embed(
+    embed4 = Embed(
         title="Permission Denied",
         color=0xFF0000,
         description=f"You can't {ctx.command.name} the owner of this server.",
     )
-    embed5 = discord.Embed(
+    embed5 = Embed(
         title="Permission Denied",
         color=0xFF0000,
         description=f"You can't {ctx.command.name} someone who has the same permissions as you.",
     )
-    embed6 = discord.Embed(
+    embed6 = Embed(
         title="Permission Denied",
         color=0xFF0000,
         description=f"You can't {ctx.command.name} due to the role hierarchy.",

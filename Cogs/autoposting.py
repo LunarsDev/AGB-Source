@@ -7,11 +7,13 @@ from typing import TYPE_CHECKING, Union
 import aiohttp
 import discord
 from discord.ext import commands, tasks
+from Manager.emoji import Emoji
 from index import colors, config
 from Manager.logger import formatColor
 from lunarapi import Client, endpoints
 from sentry_sdk import capture_exception
 from utils import imports
+from utils.embeds import EmbedMaker as Embed
 from utils.default import log
 
 if TYPE_CHECKING:
@@ -98,13 +100,13 @@ class autoposting(commands.Cog, name="ap"):
         url = await get_hentai_img()
         cleaned_link = url.replace("https://api.lunardev.group/", "")
         if random.randint(1, 10) == 3:
-            embed = discord.Embed(
+            embed = Embed(
                 title="Enjoy your poggers porn lmao",
                 description=f"Posting can be slow, please take into consideration how many servers this bot is in and how many are using auto posting. Please be patient. If I completely stop posting, please rerun the command or join the support server.\n[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate})",
                 colour=colors.prim,
             )
         else:
-            embed = discord.Embed(
+            embed = Embed(
                 title="Enjoy your poggers porn lmao",
                 description=f"[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate})",
                 colour=colors.prim,
@@ -245,6 +247,15 @@ class autoposting(commands.Cog, name="ap"):
                     return
 
             # log the number of posts
+            comp_embed = Embed(
+                title=f"{Emoji.yes} Autoposting batch completed",
+                description=f"*Posted: `{posts}`*",
+                color=colors.green,
+                thumbnail=None,
+            )
+            comp_embed.set_footer(text=f"Scanned {len(self.bot.guilds)} total entries!")
+            sys = await self.bot.fetch_channel(1004423443833442335)
+            await sys.send(embed=comp_embed)
             log(f"Autoposting - Posted Batch: {formatColor(str(posts), 'green')}")
             if posts == 0:
                 # reload the cog if there are no posts made
@@ -256,18 +267,46 @@ class autoposting(commands.Cog, name="ap"):
     async def delay_task_until_bot_ready(self):
         await self.bot.wait_until_ready()
         await asyncio.sleep(5)
+        start_embed = Embed(
+            title=f"{Emoji.loading} Autoposting batch started",
+            color=colors.prim,
+            thumbnail=None,
+        )
+        sys = await self.bot.fetch_channel(1004423443833442335)
+        await sys.send(embed=start_embed)
+
+    @autoh.after_loop
+    async def run_when_done(self):
+        start_embed = Embed(
+            title=f"{Emoji.yes} Autoposting batch finished",
+            color=colors.green,
+            thumbnail=None,
+        )
+        sys = await self.bot.fetch_channel(1004423443833442335)
+        await sys.send(embed=start_embed)
 
     async def cog_unload(self) -> None:
         self.autoh.stop()
         log("Autoposting - Stopped")
+        stop_embed = Embed(
+            title=f"{Emoji.no} Autoposting stopped.", thumbnail=None, color=colors.red
+        )
+        sys = await self.bot.fetch_channel(1004423443833442335)
+        await sys.send(embed=stop_embed)
 
     async def cog_reload(self) -> None:
         self.autoh.stop()
         log("Autoposting - Reloaded")
+        reload_embed = Embed(
+            title=f"{Emoji.loading} Autoposting reloaded.",
+            thumbnail=None,
+            color=colors.red,
+        )
+        sys = await self.bot.fetch_channel(1004423443833442335)
+        await sys.send(embed=reload_embed)
 
     async def cog_load(self) -> None:
         self.autoh.start()
-        log("Autoposting - Started")
 
 
 async def setup(bot: Bot) -> None:

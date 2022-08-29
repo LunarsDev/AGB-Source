@@ -12,9 +12,10 @@ import psutil
 import requests
 from discord.ext import commands
 from discord.ui import Button, View
-from index import EmbedMaker, colors, config
+from index import colors, config
 from sentry_sdk import capture_exception
 from utils import default, imports, permissions
+from utils.embeds import EmbedMaker as Embed
 from utils.common_filters import filter_mass_mentions
 
 
@@ -74,7 +75,7 @@ class Information(commands.Cog, name="info"):
 
     def weather_message(self, data, location):
         location = location.title()
-        embed = discord.Embed(
+        embed = Embed(
             title=f"{location} Weather",
             description=f"Here is the weather data for {location}.",
             color=colors.prim,
@@ -100,16 +101,14 @@ class Information(commands.Cog, name="info"):
 
     def error_message(self, location):
         location = location.title()
-        return discord.Embed(
+        return Embed(
             title="Error caught!",
             description=f"There was an error finding weather data for {location}.",
             color=colors.prim,
         )
 
     async def create_embed(self, ctx, error):
-        embed = discord.Embed(
-            title="Error Caught!", color=0xFF0000, description=f"{error}"
-        )
+        embed = Embed(title="Error Caught!", color=0xFF0000, description=f"{error}")
 
         embed.set_thumbnail(url=self.bot.user.avatar)
         await ctx.send(
@@ -137,7 +136,7 @@ class Information(commands.Cog, name="info"):
             message_up = f"**{results_dict['upload'] / 1_000_000:.2f}** mbps"
             title = "NetSpeed Results"
             color = discord.Color.green()
-        embed = discord.Embed(title=title, color=color)
+        embed = Embed(title=title, color=color)
         embed.add_field(name="Ping", value=message_ping)
         embed.add_field(name="Download", value=message_down)
         embed.add_field(name="Upload", value=message_up)
@@ -205,7 +204,7 @@ class Information(commands.Cog, name="info"):
     @permissions.dynamic_ownerbypass_cooldown(1, 3, commands.BucketType.user)
     async def vote(self, ctx):
         """Vote for the bot"""
-        embed = discord.Embed(color=colors.prim, timestamp=ctx.message.created_at)
+        embed = Embed(color=colors.prim, timestamp=ctx.message.created_at)
         embed.set_author(
             name=ctx.bot.user.name,
             icon_url=ctx.bot.user.avatar,
@@ -241,14 +240,14 @@ class Information(commands.Cog, name="info"):
         """
         await ctx.typing(ephemeral=ephemeral)
         try:
-            await EmbedMaker(
+            await Embed(
                 title="Ping",
                 description=f"{round(self.bot.latency * 1000)}ms",
                 author=(ctx.author.name, ctx.author.avatar),
                 thumbnail=self.bot.user.avatar,
             ).send(ctx, ephemeral=ephemeral)
         except OverflowError:
-            await EmbedMaker(
+            await Embed(
                 title="Ping",
                 description="Ping cannot be calculated right now.",
                 author=(ctx.author.name, ctx.author.avatar),
@@ -278,7 +277,7 @@ class Information(commands.Cog, name="info"):
     # @commands.hybrid_command(usage="`tp!source`")
     # async def Source(self, ctx):
     #     """Who Coded This Bot """
-    #     embed = discord.Embed(color=colors.prim,
+    #     embed = Embed(color=colors.prim,
     #                           timestamp=ctx.message.created_at)
     #     embed.add_field(name="**The repo is private**",
     #                     value=f"This command really doesn't have a purpose. \nBut its here for when the repo does become public.")
@@ -322,7 +321,6 @@ class Information(commands.Cog, name="info"):
                         name = name.rstrip("s")
                     result.append(f"{value}{name}")
             return " ".join(result[:granularity])
-
 
         async def line_count(self):
             await ctx.channel.typing()
@@ -380,7 +378,7 @@ class Information(commands.Cog, name="info"):
         # API_INFO = f"""API Uptime: {API_UPTIME}\nCPU Cores: {await lunar_api_cores(self)}\nTotal Images: {await lunar_api_files(self)}"""
         # SYS_INFO = f"""System Uptime: {await lunar_system_uptime(self)}\nCPU Cores: {await lunar_api_cores(self)}"""
 
-        embed = discord.Embed(
+        embed = Embed(
             color=colors.prim,
             description=f"[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate})",
         )
@@ -474,9 +472,7 @@ class Information(commands.Cog, name="info"):
     @permissions.dynamic_ownerbypass_cooldown(1, 5, commands.BucketType.user)
     @commands.hybrid_command()
     @commands.bot_has_permissions(embed_links=True)
-    async def embedsay(
-        self, ctx, title, desc: str, colorhex: str = None, thumbnail=None
-    ):
+    async def embedsay(self, ctx, title, desc, colorhex: str = None, thumbnail=None):
         """Embedded say command
         To make a new line, type `\\n` in the description."""
         if "\\n" in desc:
@@ -490,7 +486,7 @@ class Information(commands.Cog, name="info"):
             thumbnail = "https://cdn.discordapp.com/icons/755722576445046806/822bafdc8285f1729af731b4d320c5e5.png?size=1024"
         with contextlib.suppress(Exception):
             await ctx.message.delete()
-        await EmbedMaker(
+        await Embed(
             title=title, description=desc, color=colorhex, thumbnail=thumbnail
         ).send(ctx)
 
@@ -499,7 +495,7 @@ class Information(commands.Cog, name="info"):
     @commands.bot_has_permissions(embed_links=True)
     async def policy(self, ctx):
         """Privacy Policy"""
-        embed = discord.Embed(color=colors.prim, timestamp=ctx.message.created_at)
+        embed = Embed(color=colors.prim, timestamp=ctx.message.created_at)
         embed.set_author(
             name=ctx.bot.user.name,
             icon_url=ctx.bot.user.avatar,
@@ -595,9 +591,7 @@ class Information(commands.Cog, name="info"):
 		**<:users:770650885705302036> Overview**
 		`User Bio`\n{bio}"""
 
-        embed = discord.Embed(
-            title=str(user), color=colors.prim, description=description
-        )
+        embed = Embed(title=str(user), color=colors.prim, description=description)
         embed.set_thumbnail(url=user.display_avatar)
         await msg.edit(content=None, embed=embed)
 
@@ -617,7 +611,7 @@ class Information(commands.Cog, name="info"):
             return
 
         db_user = await db_user.modify(bio=bio)
-        embed = discord.Embed(
+        embed = Embed(
             title="User Bio",
             color=colors.prim,
             description=f"Your bio has been set to: `{db_user.bio}`",
@@ -642,7 +636,7 @@ class Information(commands.Cog, name="info"):
             f"{date} {time}", "%m/%d/%Y %H:%M:%S"
         )
         uts = str(datetime_object.timestamp())[:-2]
-        await EmbedMaker(
+        await Embed(
             title="Here's the timestamp you asked for",
             color=colors.prim,
             description=f"""

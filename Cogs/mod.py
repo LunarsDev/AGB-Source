@@ -13,9 +13,10 @@ from typing import TYPE_CHECKING, Optional, Union
 
 import discord
 from discord.ext import commands
-from index import Website, colors, config, delay, EmbedMaker
+from index import Website, colors, config, delay
 from sentry_sdk import capture_exception
 from utils import checks, default, imports, permissions
+from utils.embeds import EmbedMaker as Embed
 
 if TYPE_CHECKING:
     from index import Bot
@@ -206,9 +207,7 @@ class Moderator(commands.Cog, name="mod"):
         return db_guild.prefix or self.bot.default_prefix
 
     async def create_embed(self, ctx, error):
-        embed = discord.Embed(
-            title="Error Caught!", color=0xFF0000, description=f"{error}"
-        )
+        embed = Embed(title="Error Caught!", color=0xFF0000, description=f"{error}")
 
         embed.set_thumbnail(url=self.bot.user.avatar)
         await ctx.send(embed=embed)
@@ -227,13 +226,14 @@ class Moderator(commands.Cog, name="mod"):
             if message.author.id != self.bot.user:
                 if message.content.startswith("tp!"):
                     return
-                embed = discord.Embed(colour=colors.prim)
+                embed = Embed(colour=colors.prim)
                 embed.add_field(
                     name=f"DM - From {message.author} ({message.author.id})",
                     value=f"{message.content}",
                 )
                 embed.set_footer(
-                    text=f"tp!dm {message.author.id} ", icon_url=message.author.avatar
+                    text=f"tp!owner dm {message.author.id} ",
+                    icon_url=message.author.avatar,
                 )
                 channel = self.bot.get_channel(986079167944749057)
                 if message.author.bot:
@@ -290,7 +290,7 @@ class Moderator(commands.Cog, name="mod"):
             ternary = "enabled" if command_state else "disabled"
             await db_command.modify(ctx.guild.id, not command_state)
 
-            embed = discord.Embed(
+            embed = Embed(
                 title="Command Toggled",
                 colour=discord.Colour.green(),
                 timestamp=ctx.message.created_at,
@@ -316,7 +316,7 @@ class Moderator(commands.Cog, name="mod"):
         if await permissions.check_priv(ctx, member):
             return
         await member.kick(reason=default.responsible(ctx.author, reason))
-        await ctx.send(embed=EmbedMaker(description=default.actionmessage("kicked")))
+        await ctx.send(embed=Embed(description=default.actionmessage("kicked")))
 
     @commands.hybrid_command()
     @commands.guild_only()
@@ -325,9 +325,7 @@ class Moderator(commands.Cog, name="mod"):
     async def setprefix(self, ctx, new: str = None):
         """Set a custom prefix for the server"""
 
-        no_prefix = discord.Embed(
-            title="Please put a prefix you want.", colour=colors.prim
-        )
+        no_prefix = Embed(title="Please put a prefix you want.", colour=colors.prim)
         if not new:
             return await ctx.send(embed=no_prefix)
         if len(new) > 5:
@@ -337,7 +335,7 @@ class Moderator(commands.Cog, name="mod"):
             # self.prefixes[str(ctx.guild.id)] = new
             # with open('prefixes.json', 'w') as f:
             #     json.dump(self.prefixes, f, indent=4)
-            new_prefix = discord.Embed(
+            new_prefix = Embed(
                 description=f"The new prefix is `{new}`",
                 color=colors.prim,
                 timestamp=ctx.message.created_at,
@@ -514,7 +512,7 @@ class Moderator(commands.Cog, name="mod"):
     # @slashsetup.error
     # async def slashsetup_error(self, ctx, error):
     #     if isinstance(error, commands.MissingPermissions):
-    #         embed = discord.Embed(
+    #         embed = Embed(
     #             title="Error Caught!",
     #             color=0xFF0000,
     #             description=f"Please join the support server for help **[here]({config.Server})**.",
@@ -523,7 +521,7 @@ class Moderator(commands.Cog, name="mod"):
     #         await ctx.send(content="This command will be converted to slash commands before April 30th.", embed=embed)
     #         return
     #     elif isinstance(error, commands.CommandInvokeError):
-    #         embed = discord.Embed(
+    #         embed = Embed(
     #             title="Error Caught!",
     #             color=0xFF0000,
     #             description=f"This command is complex in terms of setting up, please join the support server for **[help]({config.Server})**.",
@@ -609,7 +607,7 @@ class Moderator(commands.Cog, name="mod"):
         if "administrator" in perms:
             perms = "Administrator ( All permissions )"
 
-        embed = discord.Embed(
+        embed = Embed(
             title=f"{self.bot.user.name} has the following permissions:",
             description=f"[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate})\n**{perms}**",
             url=Website,
@@ -916,7 +914,8 @@ class Moderator(commands.Cog, name="mod"):
             await ban_msg.edit(content=f"Error{e}")
             return
         await ban_msg.edit(
-            embed=discord.Embed(
+            embed=Embed(
+                content=None,
                 color=colors.prim,
                 description=f"<a:LD_Banned1:872972866092662794><a:LD_Banned2:872972848354983947><a:LD_Banned3:872972787877314601> **{member}** has been banned: reason {reason}",
             )
@@ -1059,7 +1058,7 @@ class Moderator(commands.Cog, name="mod"):
         await ctx.guild.unban(member, reason=reason)
         await ctx.send(f"Alright, softbanned em, reason: {reason}")
 
-    @commands.command()
+    @commands.command(aliases=["se", "steal", "stealemote"])
     @commands.guild_only()
     @permissions.dynamic_ownerbypass_cooldown(1, 5, commands.BucketType.user)
     @permissions.has_permissions(manage_emojis=True, manage_guild=True)
@@ -1181,8 +1180,8 @@ class Moderator(commands.Cog, name="mod"):
                 "Channel name is too long! Please make it under 100 characters.",
                 ephemeral=True,
             )
-        await ctx.guild.create_text_channel(channel)
-        await ctx.send(f"{channel} has been created!", ephemeral=True)
+        bruh = await ctx.guild.create_text_channel(channel)
+        await ctx.send(f"{bruh.mention} has been created!", ephemeral=True)
 
     @channel.command(name="delete")
     @permissions.has_permissions(manage_channels=True)
@@ -1554,7 +1553,7 @@ class Moderator(commands.Cog, name="mod"):
         """Deletes a channel and clones it for you to quickly delete all the messages inside of it"""
         with contextlib.suppress(Exception):
             await ctx.message.delete()
-        embed = discord.Embed(title="Channel Nuked", color=0x00FF00)
+        embed = Embed(title="Channel Nuked", color=0x00FF00)
         embed.set_image(url="https://media.giphy.com/media/HhTXt43pk1I1W/giphy.gif")
         if channel is None:
             await ctx.send("Please specify a channel to delete!")
@@ -1675,7 +1674,7 @@ class Moderator(commands.Cog, name="mod"):
         else:
             time = int(time)
         if time > 2419200:
-            await EmbedMaker(
+            await Embed(
                 description="You can't mute someone for more than 28 days! Please use a shorter time.",
                 footer="mc.lunardev.group 1.19.2",
             ).send(ctx, ephemeral=True)
@@ -1687,7 +1686,7 @@ class Moderator(commands.Cog, name="mod"):
         except Exception as e:
             capture_exception(e)
             # say that the bot needs moderate_members permissions
-            await EmbedMaker(
+            await Embed(
                 title="Error",
                 description="I need the `moderate_members` permission to do this.",
                 footer="mc.lunardev.group 1.19.2",
@@ -1695,22 +1694,22 @@ class Moderator(commands.Cog, name="mod"):
             return
 
         if time > 86400:
-            await EmbedMaker(
+            await Embed(
                 description=f"{member.mention} has been muted for {time // 86400} days.",
                 footer="mc.lunardev.group 1.19.2",
             ).send(ctx, ephemeral=ephemeral)
         elif time > 3600:
-            await EmbedMaker(
+            await Embed(
                 description=f"{member.mention} has been muted for {time // 3600} hours.",
                 footer="mc.lunardev.group 1.19.2",
             ).send(ctx, ephemeral=ephemeral)
         elif time > 60:
-            await EmbedMaker(
+            await Embed(
                 description=f"{member.mention} has been muted for {time // 60} minutes.",
                 footer="mc.lunardev.group 1.19.2",
             ).send(ctx, ephemeral=ephemeral)
         else:
-            await EmbedMaker(
+            await Embed(
                 description=f"{member.mention} has been muted for {time} seconds.",
                 footer="mc.lunardev.group 1.19.2",
             ).send(ctx, ephemeral=ephemeral)
