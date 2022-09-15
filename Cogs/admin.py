@@ -213,13 +213,6 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
         self.nword_re_comp = re.compile(self.nword_re, re.IGNORECASE | re.UNICODE)
         self.afks = {}
 
-        self.CONTAINERS = {
-            "AGB": "f3624f10a30fad7d2b98914dd47a5035ab66dc9cbae8347b50937a232ae0b8b6",
-            "PgAdmin": "3f4c0f8fcaf6cd557c4a5fe23c0ecd214fa37eeeaee24f16433397a5aa7cca17",
-            "Status Page": "5f2c8d1b1b8e7909bae2024586c67bc0693585d0faf12845beff62fbc7a6ed9e",
-            "Minecraft Server": "62c60c804abff8443d02b471a15e8b9e31236e6fded5b79842ed5269b94b1953",
-            "Website": "7655ad002f43a9f268cd3bc38c8c2b2d49d30ab9fc36b620eecd84918d829a0d",
-        }
 
         self.errors = (
             commands.NoPrivateMessage,
