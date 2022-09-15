@@ -21,8 +21,7 @@
 	<a href="https://lunardev.group/">
 		<img src="https://img.shields.io/website?url=https%3A%2F%2Flunardev.group%2F" alt="website">
 	</a>
-	<a href="https://wakatime.com/badge/github/Motzumoto/agb-final">
-		<img src="https://wakatime.com/badge/github/Motzumoto/agb-final.svg" alt="wakatime">
+	<a href="https://wakatime.com/badge/github/Motzumoto/AGB"><img src="https://wakatime.com/badge/github/Motzumoto/AGB.svg" alt="wakatime">
 	</a>
 	<a href="https://github.com/psf/black">
 		<img src="https://img.shields.io/badge/code%20style-black-000000.svg" alt="code style">
