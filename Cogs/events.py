@@ -3,12 +3,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import re
 from typing import TYPE_CHECKING
 
-
-# import cronitor
 import discord
-import re
 from discord.ext import commands
 from index import DEV
 from Manager.logger import formatColor
@@ -20,7 +18,11 @@ from utils.embeds import EmbedMaker as Embed
 if TYPE_CHECKING:
     from index import Bot
 
+# Regex below for listeners
 USER_ID_REG = re.compile("[0-9]{15,19}")
+URL_RE = re.compile(
+    "http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*(),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+"
+)
 
 
 class events(commands.Cog):
@@ -35,7 +37,8 @@ class events(commands.Cog):
         self.last_guild_count = 0
         self.last_user_count = 0
 
-    async def try_to_send_msg_in_a_channel(self, guild, msg):
+    @staticmethod
+    async def try_to_send_msg_in_a_channel(guild, msg):
         for channel in guild.channels:
             with contextlib.suppress(Exception):
                 await channel.send(msg)
@@ -70,16 +73,14 @@ class events(commands.Cog):
         if message.author == self.bot.user:
             return
         if message.channel.id == 929741070777069608:
-            # check if the message is a number
             if message.content.isdigit():
-                number = int(message.content)
-                new_number = add_one(number)
+                new_number = add_one(int(message.content))
                 await message.channel.send(new_number)
             else:
                 await message.channel.send("Please enter a number")
 
     @commands.Cog.listener(name="on_message")
-    async def agb_dm_responder(self, message):
+    async def agb_support_responder(self, message):
         if message.guild is None:
             return
         if message.guild.id != 975810661709922334:
@@ -89,42 +90,32 @@ class events(commands.Cog):
             and message.reference
             and message.reference.resolved.author.bot
         ):
+            _message = message.content
             for embed in message.reference.resolved.embeds:
                 user_id = USER_ID_REG.findall(embed.footer.text)
             user = self.bot.get_user(user_id[0])
             if user is None:
                 user = await self.bot.fetch_user(user_id[0])
-            e = Embed(
+            em = Embed(
                 title=f"New message From {message.author.name} | {self.bot.user.name} DEV",
-                description=message.content,
                 footer="To contact me, just DM the bot",
             )
+            with contextlib.suppress(Exception):
+                em.set_image(url=message.attachments[0].url)
+            if message.attachments is None:
+                image_formats = (".jpeg", ".jpg", ".png", ".gif", ".webm", ".webp")
+                links = URL_RE.findall(_message)
+                for i in links:
+                    if i.endswith(image_formats):
+                        em.set_image(url=i)
+                        _message.replace(i, "")
+            em.description = _message
             try:
-                await user.send(embed=e)
+                await user.send(embed=em)
                 await message.add_reaction("✅")
             except discord.Forbidden:
                 await message.reply("I could not DM that user.")
                 await message.add_reaction("❌")
-
-    # @commands.Cog.listener(name="on_message")
-    # async def add_server_to_db(self, ctx):
-    #
-    #     # Add server to database
-    #     try:
-    #         cursor_n.execute(
-    #             f"SELECT * FROM public.guilds WHERE guildId = '{ctx.guild.id}'"
-    #         )
-    #     except Exception:
-    #         pass
-    #     row_count = cursor_n.rowcount
-    #     if row_count == 0:
-    #         cursor_n.execute(
-    #             f"INSERT INTO guilds (guildId) VALUES ('{ctx.guild.id}')")
-    #         mydb_n.commit()
-    #         log(
-    #             f"New guild detected: {ctx.guild.id} | Added to database!")
-    #     else:
-    #         return
 
     # DO NOT PUT THIS IN MERGED EVENT, IT WILL ONLY WORK IN ITS OWN SEPERATE EVENT. **I DO NOT KNOW WHY :D**
     # DO NOT PUT THIS IN MERGED EVENT, IT WILL ONLY WORK IN ITS OWN SEPERATE EVENT. **I DO NOT KNOW WHY :D**
@@ -142,10 +133,6 @@ class events(commands.Cog):
             if not db_user.message_tracking:
                 return
             await db_user.modify(usedcmds=db_user.usedcmds + 1)
-
-    # @commands.Cog.listener(name="on_command")
-    # async def owner_check(self, ctx):
-    #
 
     #     if ctx.author.id in self.config.owners:
     #         await
@@ -256,10 +243,6 @@ class events(commands.Cog):
                 f"No economy entry detected for: {ctx.author.id} / {ctx.author} | Added to database!"
             )
 
-    # @commands.Cog.listener(name="on_command")
-    # async def remove_admin_command_uses(self, ctx):
-    #     """Deletes the invoked command that comes from admin.py"""
-
     #     if ctx.author.bot:
     #         return
     #     # check the command to see if it comes from admin.py
@@ -267,19 +250,10 @@ class events(commands.Cog):
     #         with contextlib.suppress(Exception):
     #             await ctx.message.delete()
 
-    # @commands.Cog.listener(name="on_member_join")
-    # async def autorole(self, member):
-    #     log_channel = ()# get the log channel / welcome channel
-    #     # . . .
-    #     #get the roles they want to give the member
-    #     # . . .
-    #     await member.add_roles()
-    #     await log_channel.send()
-
     @commands.Cog.listener(name="on_command")
     async def logger_shit(self, ctx):
 
-        if not ctx.guild or ctx.author.bot or ctx.interaction:
+        if not ctx.guild or ctx.author.bot:
             return
 
         db_user = self.bot.db.get_user(ctx.author.id) or await self.bot.db.fetch_user(
@@ -294,14 +268,17 @@ class events(commands.Cog):
         #         log(
         #             f"{formatColor('[CHUNK]', 'bold_red')} Chunked server {formatColor(f'{ctx.guild.id}', 'grey')}"
         #         )
+        used_command = f"{ctx.prefix}{ctx.command.qualified_name}"
+        args = tuple(ctx.args) + tuple(ctx.kwargs.values())
+        formatted_text = f"{used_command} {args}"
 
         if await self.bot.is_owner(ctx.author):
             log(
-                f"{formatColor('[DEV]', 'bold_red')} {formatColor(ctx.author, 'red')} used command {formatColor(ctx.message.clean_content, 'grey')}"
+                f"{formatColor('[DEV]', 'bold_red')} {formatColor(ctx.author, 'red')} used command {formatColor(formatted_text, 'grey')}"
             )
         else:
             log(
-                f"{formatColor(ctx.author.id, 'grey')} used command {formatColor(ctx.message.clean_content, 'grey')}"
+                f"{formatColor(ctx.author.id, 'grey')} used command {formatColor(formatted_text, 'grey')}"
             )
 
     @commands.Cog.listener()
@@ -329,14 +306,13 @@ class events(commands.Cog):
         if not db_guild:
             log(f"Removed from: {guild.id}")
             return
-        else:
-            await self.bot.db.remove_guild(guild.id)
-            log(f"Removed from: {guild.id} | Deleting database entry!")
+        await self.bot.db.remove_guild(guild.id)
+        log(f"Removed from: {guild.id} | Deleting database entry!")
 
     @commands.Cog.listener(name="on_guild_join")
     async def MessageSentOnGuildJoin(self, guild):
 
-        nick = f"[tp!] {self.bot.user.name}"
+        nick = f"[/] {self.bot.user.name}"
         try:
             await guild.me.edit(nick=nick)
         except discord.errors.Forbidden:
@@ -403,25 +379,6 @@ class events(commands.Cog):
                 log(
                     f"New user detected: {formatColor(member.id, 'green')} | Added to database!"
                 )
-
-    # @commands.Cog.listener(name="on_message")
-    # async def automod_sql(self, ctx):
-    #     if ctx.author.bot:
-    #         return
-    #     else:
-    #         pass
-    #     try:
-    #         cursor_n.execute(
-    #             f"SELECT * FROM automod WHERE guildId = {ctx.guild.id}")
-    #     except Exception:
-    #         pass
-    #     automod_rows = cursor_n.rowcount
-    #     if automod_rows == 0:
-    #         cursor_n.execute(
-    #             f"INSERT INTO automod (guildId) VALUES ({ctx.guild.id})")
-    #         mydb_n.commit()
-    #     else:
-    #         return
 
     # from index import EmbedMaker, EmbedMaker, cursor_n, mydb_n
     # for guild in self.guilds:

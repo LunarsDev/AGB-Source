@@ -9,9 +9,9 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Dict, Union
 
-from utils.embeds import EmbedMaker as Embed
 from discord.ext import commands
 from index import colors
+from utils.embeds import EmbedMaker as Embed
 
 if TYPE_CHECKING:
     from index import Bot
@@ -35,8 +35,6 @@ async def setup(bot: Bot):
     # This module isn't actually a cog - but it is a place
     # we can call "a trash fire"
     await bot.add_cog(Utils(bot))
-    # global bot
-    # bot = bot_start
 
 
 def create_blacklist_date(days):
@@ -104,9 +102,10 @@ def _parse(translation_file: io.TextIOWrapper) -> Dict[str, str]:
             # New msgid
             if step is IN_MSGSTR and translated:
                 # Store the last translation
-                translations[locale][_unescape(untranslated)] = _unescape(translated)
+                translations[locale][_unescape(
+                    untranslated)] = _unescape(translated)
             step = IN_MSGID
-            untranslated = line[len(MSGID) : -1]
+            untranslated = line[len(MSGID): -1]
         elif line.startswith('"') and line.endswith('"'):
             if step is IN_MSGID:
                 # Line continuing on from msgid
@@ -117,7 +116,7 @@ def _parse(translation_file: io.TextIOWrapper) -> Dict[str, str]:
         elif line.startswith(MSGSTR):
             # New msgstr
             step = IN_MSGSTR
-            translated = line[len(MSGSTR) : -1]
+            translated = line[len(MSGSTR): -1]
 
     if step is IN_MSGSTR and translated:
         # Store the final translation
@@ -172,9 +171,7 @@ class Translator(Callable[[str], str]):
             return untranslated
 
     def load_translations(self):
-        """
-        Loads the current translations.
-        """
+        """Loads the current translations."""
         locale = get_locale()
 
         if locale.lower() == "en-us":
@@ -186,9 +183,10 @@ class Translator(Callable[[str], str]):
             return
 
         locale_path = get_locale_path(self.cog_folder, "po")
-        with contextlib.suppress(IOError, FileNotFoundError):
-            with locale_path.open(encoding="utf-8") as file:
-                self._parse(file)
+        with contextlib.suppress(IOError, FileNotFoundError), locale_path.open(
+            encoding="utf-8"
+        ) as file:
+            self._parse(file)
 
     def _parse(self, translation_file):
         self.translations.update(_parse(translation_file))

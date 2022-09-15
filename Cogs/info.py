@@ -5,6 +5,7 @@ import datetime
 import json
 import os
 import pathlib
+import secrets
 from typing import TYPE_CHECKING, Annotated, List, Optional, Union
 
 import discord
@@ -13,10 +14,9 @@ import requests
 from discord.ext import commands
 from discord.ui import Button, View
 from index import colors, config
-from sentry_sdk import capture_exception
 from utils import default, imports, permissions
-from utils.embeds import EmbedMaker as Embed
 from utils.common_filters import filter_mass_mentions
+from utils.embeds import EmbedMaker as Embed
 
 
 def list_items_in_english(l: List[str], oxford_comma: bool = True) -> str:
@@ -46,10 +46,9 @@ class MemberConverter(commands.MemberConverter):
             ]
             if len(members) == 1:
                 return members[0]
-            else:
-                raise commands.BadArgument(
-                    f"{len(members)} members found, please be more specific."
-                ) from e
+            raise commands.BadArgument(
+                f"{len(members)} members found, please be more specific."
+            ) from e
 
 
 class Information(commands.Cog, name="info"):
@@ -60,20 +59,20 @@ class Information(commands.Cog, name="info"):
         self.bot: Bot = bot
         self.config = imports.get("config.json")
         self.lunar_headers = {f"{config.lunarapi.header}": f"{config.lunarapi.token}"}
-        # self.thanks = default.get("thanks.json")
-        # self.blist_api = blist.Blist(bot, token=self.config.blist)
         self.process = psutil.Process(os.getpid())
 
     async def cog_unload(self):
         self.process.stop()
 
-    def parse_weather_data(self, data):
+    @staticmethod
+    def parse_weather_data(data):
         data = data["main"]
         del data["humidity"]
         del data["pressure"]
         return data
 
-    def weather_message(self, data, location):
+    @staticmethod
+    def weather_message(data, location):
         location = location.title()
         embed = Embed(
             title=f"{location} Weather",
@@ -99,7 +98,8 @@ class Information(commands.Cog, name="info"):
 
         return embed
 
-    def error_message(self, location):
+    @staticmethod
+    def error_message(location):
         location = location.title()
         return Embed(
             title="Error caught!",
@@ -142,13 +142,13 @@ class Information(commands.Cog, name="info"):
         embed.add_field(name="Upload", value=message_up)
         return embed
 
-    @commands.command()
+    @commands.hybrid_command()
     @commands.bot_has_permissions(embed_links=True)
     @permissions.dynamic_ownerbypass_cooldown(1, 3, commands.BucketType.user)
     async def weather(self, ctx, *, location: str = None):
         """Get weather data for a location
         You can use your zip code or your city name.
-        Ex; `tp!weather City / Zip Code` or `tp!weather City,Town`"""
+        Ex; `/weather City / Zip Code` or `/weather City,Town`"""
         if location is None:
             await ctx.send("Please send a valid location.")
             return
@@ -164,39 +164,36 @@ class Information(commands.Cog, name="info"):
     @commands.hybrid_command()
     @commands.bot_has_permissions(embed_links=True)
     @permissions.dynamic_ownerbypass_cooldown(1, 3, commands.BucketType.user)
-    async def f2c(self, ctx, *, temp: str, ephemeral: bool = False):
+    async def f2c(self, ctx, *, temp: float, ephemeral: bool = False):
         """Convert Fahrenheit to Celsius
 
         Args:
             temp (str): The temperature to convert
             ephemeral (optional): make the command visible to you or others. Defaults to False.
         """
-
         if temp is None:
             await ctx.send("Please send a valid temperature.", ephemeral=True)
             return
 
-        temp = float(temp)
+        temp = temp
         cel = (temp - 32) * (5 / 9)
         await ctx.send(f"{temp}°F is {round(cel, 2)}°C", ephemeral=ephemeral)
 
     @commands.hybrid_command()
     @commands.bot_has_permissions(embed_links=True)
     @permissions.dynamic_ownerbypass_cooldown(1, 3, commands.BucketType.user)
-    async def c2f(self, ctx, *, temp: str, ephemeral: bool = False):
+    async def c2f(self, ctx, *, temp: float, ephemeral: bool = False):
         """Convert Celsius to Fahrenheit
 
         Args:
             temp (str): the temperature to convert
             ephemeral (optional): make the command visible to you or others. Defaults to False.
         """
-
         if temp is None:
             await ctx.send("Please send a valid temperature.", ephemeral=True)
             return
-
-        temp = float(temp)
-        fah = (temp * (9 / 5)) + 32
+        temp = temp
+        fah = temp * (9 / 5) + 32
         await ctx.send(f"{temp}°C is {round(fah, 2)}°F", ephemeral=ephemeral)
 
     @commands.hybrid_command()
@@ -204,15 +201,26 @@ class Information(commands.Cog, name="info"):
     @permissions.dynamic_ownerbypass_cooldown(1, 3, commands.BucketType.user)
     async def vote(self, ctx):
         """Vote for the bot"""
-        embed = Embed(color=colors.prim, timestamp=ctx.message.created_at)
+        vote_btn = Button(
+            label="Vote",
+            style=discord.ButtonStyle.link,
+            url=config.Vote,
+        )
+        support_btn = Button(
+            label="Support server", style=discord.ButtonStyle.link, url=config.Server
+        )
+        view = View()
+        view.add_item(vote_btn)
+        view.add_item(support_btn)
+
+        embed = Embed(
+            title="Thank you!", color=colors.prim, timestamp=ctx.message.created_at
+        )
         embed.set_author(
             name=ctx.bot.user.name,
             icon_url=ctx.bot.user.avatar,
         )
         embed.set_thumbnail(url=ctx.bot.user.avatar)
-        embed.add_field(
-            name="Thank You!", value=f"[Click Me]({config.Vote})", inline=True
-        )
         embed.add_field(
             name=f"{ctx.bot.user.name} was made with love by: {'' if len(self.config.owners) == 1 else ''}",
             value=", ".join(
@@ -221,13 +229,7 @@ class Information(commands.Cog, name="info"):
             inline=False,
         )
         embed.set_thumbnail(url=ctx.author.avatar)
-        try:
-            await ctx.send(
-                embed=embed,
-            )
-        except Exception as err:
-            capture_exception(err)
-            await ctx.send(err)
+        await ctx.send(embed=embed, view=view)
 
     @commands.hybrid_command()
     @commands.bot_has_permissions(embed_links=True)
@@ -241,17 +243,17 @@ class Information(commands.Cog, name="info"):
         await ctx.typing(ephemeral=ephemeral)
         try:
             await Embed(
-                title="Ping",
+                title="Ping :ping_pong:",
                 description=f"{round(self.bot.latency * 1000)}ms",
                 author=(ctx.author.name, ctx.author.avatar),
-                thumbnail=self.bot.user.avatar,
+                thumbnail=None,
             ).send(ctx, ephemeral=ephemeral)
         except OverflowError:
             await Embed(
                 title="Ping",
                 description="Ping cannot be calculated right now.",
                 author=(ctx.author.name, ctx.author.avatar),
-                thumbnail=self.bot.user.avatar,
+                thumbnail=None,
             ).send(ctx, ephemeral=ephemeral)
 
     @commands.hybrid_command()
@@ -259,7 +261,6 @@ class Information(commands.Cog, name="info"):
     @permissions.dynamic_ownerbypass_cooldown(1, 3, commands.BucketType.user)
     async def invite(self, ctx, ephemeral: bool = False):
         """Get an invite to the bot"""
-
         invite_btn = Button(
             label="Click here to invite me!",
             style=discord.ButtonStyle.link,
@@ -273,17 +274,22 @@ class Information(commands.Cog, name="info"):
         view.add_item(support_btn)
         await ctx.send(view=view, ephemeral=ephemeral)
 
-    # @permissions.dynamic_ownerbypass_cooldown(1, 5, commands.BucketType.user)
-    # @commands.hybrid_command(usage="`tp!source`")
-    # async def Source(self, ctx):
-    #     """Who Coded This Bot """
-    #     embed = Embed(color=colors.prim,
-    #                           timestamp=ctx.message.created_at)
-    #     embed.add_field(name="**The repo is private**",
-    #                     value=f"This command really doesn't have a purpose. \nBut its here for when the repo does become public.")
-    #     embed.add_field(name="Look at these",
-    #                     value=f"[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate})", inline=False)
-    #     await ctx.send(content="This command will be converted to slash commands before April 30th.", embed=embed)
+    @commands.hybrid_command()
+    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
+    async def password(self, ctx, nbytes: int = 40):
+        """Generates a random password string for you
+        This returns a random URL-safe text string, containing nbytes random bytes.
+        The text is Base64 encoded, so on average each byte results in approximately 1.3 characters.
+        """
+        if nbytes not in range(3, 1001):
+            return await ctx.send("I only accept any numbers between 3-1000")
+        if hasattr(ctx, "guild") and ctx.guild is not None:
+            await ctx.send(
+                f"Alright, lemme send you this randomly generated password {ctx.author.mention}."
+            )
+        await ctx.author.send(
+            f"🎁 **Here is your password:**\n{secrets.token_urlsafe(nbytes)}\n\n**You could actually use this password for things too since this was completely randomly generated.**"
+        )
 
     @commands.hybrid_command()
     @commands.bot_has_permissions(embed_links=True)
@@ -297,7 +303,6 @@ class Information(commands.Cog, name="info"):
             for channel in guild.channels:
                 num += 1
         discord_version = discord.__version__
-        amount_of_app_cmds = await self.bot.tree.fetch_commands()
         chunked = []
         for guild in self.bot.guilds:
             if guild.chunked:
@@ -321,6 +326,40 @@ class Information(commands.Cog, name="info"):
                         name = name.rstrip("s")
                     result.append(f"{value}{name}")
             return " ".join(result[:granularity])
+
+        #                 # str(await lunar_api_stats(self)).partition(".")
+
+        #                 if r.status == 200:
+        #                     return display_time(int(str(seconds).partition(".")[0]), 4)
+        #                 else:
+        #                     return "❌ API Error"
+        #         except Exception as e:
+        #             capture_exception(e)
+        #             return "❌ API Error"
+
+        #                 # str(await lunar_api_stats(self)).partition(".")
+
+        #                 return cores if r.status == 200 else "❌ API Error"
+        #         except Exception as e:
+        #             capture_exception(e)
+        #             return "❌ API Error"
+
+        #                 # str(await lunar_api_stats(self)).partition(".")
+
+        #                 return f"{int(files):,}" if r.status == 200 else "❌ API Error"
+        #         except Exception as e:
+        #             capture_exception(e)
+        #             return "❌ API Error"
+
+        #                 # str(await lunar_api_stats(self)).partition(".")
+
+        #                 if r.status == 200:
+        #                     return display_time(int(str(uptime).partition(".")[0]), 4)
+        #                 else:
+        #                     return "❌ API Error"
+        #         except Exception as e:
+        #             capture_exception(e)
+        #             return "❌ API Error"
 
         async def line_count(self):
             await ctx.channel.typing()
@@ -374,7 +413,7 @@ class Information(commands.Cog, name="info"):
         {ram_box}
         `CPU Usage: {cpu}%`
         {cpu_box}"""
-        BOT_INFO = f"""{all_chunked}\nLatency: {round(self.bot.latency * 1000, 2)}ms\nShard count: {shards}\nLoaded CMDs: {len([x.name for x in self.bot.commands])} and {len(amount_of_app_cmds)} slash commands\nMade: {made}\n{await line_count(self)}\nOnline for: {default.uptime(self.bot.launch_time)}"""
+        BOT_INFO = f"""{all_chunked}\nLatency: {round(self.bot.latency * 1000, 2)}ms\nShard count: {shards}\nLoaded CMDs: {len(set(self.bot.walk_commands()))}\nMade: {made}\n{await line_count(self)}\nOnline for: {default.uptime(self.bot.launch_time)}"""
         # API_INFO = f"""API Uptime: {API_UPTIME}\nCPU Cores: {await lunar_api_cores(self)}\nTotal Images: {await lunar_api_files(self)}"""
         # SYS_INFO = f"""System Uptime: {await lunar_system_uptime(self)}\nCPU Cores: {await lunar_api_cores(self)}"""
 
@@ -393,8 +432,6 @@ class Information(commands.Cog, name="info"):
         )
 
         embed.add_field(name="Bot Information", value=BOT_INFO, inline=False)
-        # embed.add_field(name="API Information", value=API_INFO, inline=False)
-        # embed.add_field(name="System Information", value=SYS_INFO, inline=False)
         embed.set_image(
             url="https://media.discordapp.net/attachments/940897271120273428/954507474394808451/group.gif"
         )
@@ -406,51 +443,6 @@ class Information(commands.Cog, name="info"):
             content=f"Stats about **{self.bot.user}** | **{self.config.version}**",
             embed=embed,
         )
-
-    @permissions.dynamic_ownerbypass_cooldown(1, 5, commands.BucketType.user)
-    @commands.command()
-    @commands.check(permissions.is_owner)
-    async def remindme(self, ctx, time: str, *, reminder: str):
-        valid_time_units = ("s", "m", "h", "d", "w")
-        if not time.endswith(valid_time_units):
-            await ctx.send("Invalid time unit! Please use s, m, h, d, or w.")
-            return
-        if time.endswith("s"):
-            time = int(time[:-1])
-        elif time.endswith("m"):
-            time = int(time[:-1]) * 60
-        elif time.endswith("h"):
-            time = int(time[:-1]) * 3600
-        elif time.endswith("d"):
-            time = int(time[:-1]) * 86400
-        elif time.endswith("w"):
-            time = int(time[:-1]) * 604800
-        else:
-            time = int(time)
-        await self.bot.db.add_reminder(ctx.author.id, str(time), reminder)
-        if time > 86400:
-            await ctx.send(
-                f"Coming back to you in {time // 86400} days.",
-            )
-        elif time > 3600:
-            await ctx.send(
-                f"Coming back to you in {time // 3600} hours.",
-            )
-        elif time > 60:
-            await ctx.send(
-                f"Coming back to you in {time // 60} minutes.",
-            )
-        else:
-            await ctx.send(
-                f"Coming back to you in {time} seconds.",
-            )
-
-    @permissions.dynamic_ownerbypass_cooldown(1, 5, commands.BucketType.user)
-    @commands.command()
-    @commands.check(permissions.is_owner)
-    async def reminders(self, ctx):
-        bruh = await self.bot.db.fetch_reminder(ctx.author.id)
-        await ctx.send(bruh)
 
     @permissions.dynamic_ownerbypass_cooldown(1, 5, commands.BucketType.user)
     @commands.hybrid_command()
@@ -491,7 +483,7 @@ class Information(commands.Cog, name="info"):
         ).send(ctx)
 
     @permissions.dynamic_ownerbypass_cooldown(1, 5, commands.BucketType.user)
-    @commands.command()
+    @commands.hybrid_command()
     @commands.bot_has_permissions(embed_links=True)
     async def policy(self, ctx):
         """Privacy Policy"""
@@ -536,14 +528,12 @@ class Information(commands.Cog, name="info"):
         )
 
     @permissions.dynamic_ownerbypass_cooldown(1, 5, commands.BucketType.user)
-    @commands.command()
+    @commands.hybrid_command()
     @commands.bot_has_permissions(embed_links=True)
     async def profile(
         self,
         ctx: commands.Context,
-        user: Optional[
-            Union[Annotated[discord.Member, MemberConverter], discord.User]
-        ] = None,
+        user: MemberConverter = None,
     ):
         """Show your user profile"""
         user = user or ctx.author
@@ -596,7 +586,7 @@ class Information(commands.Cog, name="info"):
         await msg.edit(content=None, embed=embed)
 
     @permissions.dynamic_ownerbypass_cooldown(1, 5, commands.BucketType.user)
-    @commands.command()
+    @commands.hybrid_command()
     @commands.bot_has_permissions(embed_links=True)
     async def bio(self, ctx, *, bio: Optional[str] = None):
         """Set your profile bio"""
@@ -620,7 +610,7 @@ class Information(commands.Cog, name="info"):
             embed=embed,
         )
 
-    @commands.command()
+    @commands.hybrid_command()
     @commands.bot_has_permissions(embed_links=True)
     @permissions.dynamic_ownerbypass_cooldown(1, 5, commands.BucketType.user)
     async def timestamp(self, ctx, date: str, time: str = None):

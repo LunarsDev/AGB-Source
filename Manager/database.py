@@ -4,15 +4,16 @@ import contextlib
 from typing import TYPE_CHECKING, Any, Coroutine, Literal, Optional, Union, overload
 
 from asyncpg import Pool, Record, create_pool
-
 from utils.errors import DatabaseError
+
 from .logger import formatColor
 from .objects import *
 
 if TYPE_CHECKING:
-    from index import Bot
-    from ._types import DBConfig
     from asyncpg import Connection as AsyncConnection
+    from index import Bot
+
+    from ._types import DBConfig
 
 DATABASE_LOGGING_PREFIX = formatColor("[Database]", "green")
 
@@ -61,8 +62,7 @@ class Connection:
     async def __get_active_connection(self) -> AsyncConnection:
         if len(self.__open_connections) == 0:
             return await self.pool.acquire()
-        else:
-            return self.__open_connections[0]
+        return self.__open_connections[0]
 
     async def __close_connections(self, c: Optional[AsyncConnection] = None) -> None:
         with contextlib.suppress(Exception):
@@ -86,7 +86,7 @@ class Connection:
     async def executemany(self, query, *args) -> Any:
         con = await self.__get_active_connection()
         try:
-            return await con.executemany(query, *args)
+            return await con.executemany(query, args)
         except Exception as e:
             raise DatabaseError(e) from e
         finally:
@@ -157,38 +157,25 @@ class Database(Connection):
 
         # cache
 
-        # key = command_name, value = Command (object)
         self._commands: dict[str, Command] = {}
-        # key = user_id, value = User (object)
         self._users: dict[int, User] = {}
-        # key = user_id, value = UserEconomy (object)
         self._economy_users: dict[int, UserEconomy] = {}
-        # key = guild_id, value = Guild (object)
         self._guilds: dict[int, Guild] = {}
-        # key = guild_id, value = AutoMod (object)
         self._automods: dict[int, AutoMod] = {}
-        # key = guild_id, value = AutoPosting (object)
         self._autopostings: dict[int, AutoPosting] = {}
-        # key = role_id, value = AutoRoles (object)
         self._autoroles: dict[int, AutoRole] = {}
         # key = badge name, value = Badge (object)
         self._badges: dict[str, Badge] = {}
-        # key = user_id, value = Blacklist (object)
         self._blacklists: dict[int, Blacklist] = {}
-        # key = guild_id, value = GuildBlacklist (object)
         self._guild_blacklists: dict[int, GuildBlacklist] = {}
-        # key = id, value = Status (object)
         self._statuses: dict[int, Status] = {}
-        # key = user_id, value = Reminder (object)
-        self._reminders: dict[int, Reminder] = {}
-        # key = name, value = GlobalVar (object)
         self._global_vars: dict[str, GlobalVar] = {}
 
         self._table_to_cache: dict[Table, tuple[str, dict[Any, Any]]] = {
             Table.USERS: ("userid", self._users),
             Table.USER_ECONOMY: ("userid", self._economy_users),
             Table.GUILDS: ("guildid", self._guilds),
-            Table.REMINDERS: ("user", self._reminders),
+            # Table.REMINDERS: ("user", self._reminders),
             Table.COMMANDS: ("placeholder", self._commands),
             Table.AUTOMOD: ("server", self._automods),
             Table.AUTOPOSTING: ("guild_id", self._autopostings),
@@ -244,7 +231,7 @@ class Database(Connection):
         global_vars: bool = False,
         guild_blacklists: bool = False,
         guilds: bool = False,
-        reminders: bool = False,
+        # reminders: bool = False,
         statuses: bool = False,
         users: bool = False,
         user_economy: bool = False,
@@ -260,7 +247,6 @@ class Database(Connection):
         global_vars = global_vars or all
         guild_blacklists = guild_blacklists or all
         guilds = guilds or all
-        reminders = reminders or all
         statuses = statuses or all
         users = users or all  # users or all
         user_economy = user_economy or all
@@ -334,13 +320,13 @@ class Database(Connection):
                 LOG_CHUNKING_TEXT.format(LOG_CHUNKING_PREFIX, "guild blacklists")
                 + f" Done! Chunked {len(objs)} entries."
             )
-        if reminders:
-            log(LOG_CHUNKING_TEXT.format(LOG_CHUNKING_PREFIX, "reminders"))
-            objs = await self.fetch_reminders(cache=cache)
-            log(
-                LOG_CHUNKING_TEXT.format(LOG_CHUNKING_PREFIX, "reminders")
-                + f" Done! Chunked {len(objs)} entries."
-            )
+        # if reminders:
+        #     log(LOG_CHUNKING_TEXT.format(LOG_CHUNKING_PREFIX, "reminders"))
+        #     objs = await self.fetch_reminders(cache=cache)
+        #     log(
+        #         LOG_CHUNKING_TEXT.format(LOG_CHUNKING_PREFIX, "reminders")
+        #         + f" Done! Chunked {len(objs)} entries."
+        #     )
         if statuses:
             log(LOG_CHUNKING_TEXT.format(LOG_CHUNKING_PREFIX, "statuses"))
             objs = await self.fetch_statuses(cache=cache)
@@ -441,7 +427,7 @@ class Database(Connection):
     # commands
 
     async def add_command(self, command_name) -> Command:
-        query = f"ALTER TABLE {Table.COMMANDS} ADD COLUMN IF NOT EXISTS {command_name.lower()} VARCHAR(75)"
+        query = f"ALTER TABLE {Table.COMMANDS} ADD COLUMN IF NOT EXISTS '{command_name.lower()}' VARCHAR(75)"
         await self.execute(query)
         inst = Command(self, name=command_name)
         await inst.fill_guild_ids()
@@ -449,7 +435,7 @@ class Database(Connection):
         return inst
 
     async def remove_command(self, command_name) -> Optional[Command]:
-        query = f"ALTER TABLE {Table.COMMANDS} DROP COLUMN {command_name.lower()}"
+        query = f"ALTER TABLE {Table.COMMANDS} DROP COLUMN '{command_name.lower()}'"
         await self.execute(query)
         return self._commands.pop(command_name, None)
 
@@ -473,7 +459,7 @@ class Database(Connection):
     async def fetch_command(
         self, command_name, cache: bool = False
     ) -> Optional[Command]:
-        query = f"SELECT {command_name} FROM {Table.COMMANDS}"
+        query = f"SELECT commands.{command_name} FROM {Table.COMMANDS}"
         try:
             data = await self.fetchrow(query)
         except DatabaseError:
@@ -682,6 +668,7 @@ class Database(Connection):
 
     async def fetch_badge(self, badge: Badges, cache: bool = False) -> Optional[Badge]:
         data = await self.fetchval(f"SELECT {badge.value} FROM {Table.BADGES.value}")
+
         if not data:
             return None
 
@@ -754,7 +741,7 @@ class Database(Connection):
             query = f"UPDATE {Table.BLACKLIST} SET blacklisted = $1, blacklistedtill = $2, reason = $4 WHERE userid = $3 AND blacklisted = 'false'"
             values += (reason,)
 
-        data = await self.fetchrow(query, *values)
+        data = await self.fetchrow(query, Table.BLACKLIST, *values)
         inst = Blacklist(self, dict(data))  # type: ignore
         self._blacklists[user_id] = inst
         return inst
@@ -781,8 +768,6 @@ class Database(Connection):
         return await self.__fetch(
             Table.BLACKLIST, cache=cache, where={"userid": str(user_id)}
         )
-
-    # global vars
 
     async def add_global_var(
         self,
@@ -839,31 +824,6 @@ class Database(Connection):
         )
 
     # reminders
-
-    async def add_reminder(self, user_id: int, length, reminder) -> Reminder:
-        query = f"INSERT INTO {Table.REMINDERS} VALUES ($1, $2, $3) RETURNING *"
-        data = await self.fetchrow(query, str(user_id), length, reminder)
-        inst = Reminder(self, dict(data))  # type: ignore
-        self._reminders[user_id] = inst
-        return inst
-
-    async def remove_reminder(self, user_id: int) -> Optional[Reminder]:
-        query = f"DELETE FROM {Table.REMINDERS} WHERE user = $1"
-        await self.execute(query, str(user_id))
-        return self._reminders.pop(user_id, None)
-
-    def get_reminder(self, user_id: int) -> Optional[Reminder]:
-        return self._reminders.get(user_id)
-
-    async def fetch_reminders(self, cache: bool = False) -> list[Reminder]:
-        return await self.__fetch(Table.REMINDERS, cache=cache)
-
-    async def fetch_reminder(
-        self, user_id: int, cache: bool = False
-    ) -> Optional[Reminder]:
-        return await self.__fetch(
-            Table.REMINDERS, cache=cache, where={"user": str(user_id)}
-        )
 
     # status
 

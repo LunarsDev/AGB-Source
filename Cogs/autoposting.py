@@ -7,14 +7,16 @@ from typing import TYPE_CHECKING, Union
 import aiohttp
 import discord
 from discord.ext import commands, tasks
-from Manager.emoji import Emoji
 from index import colors, config
-from Manager.logger import formatColor
 from lunarapi import Client, endpoints
+from Manager.emoji import Emoji
+from Manager.logger import formatColor
 from sentry_sdk import capture_exception
 from utils import imports
-from utils.embeds import EmbedMaker as Embed
 from utils.default import log
+from utils.embeds import EmbedMaker as Embed
+
+from utils.views import APIImageReporter
 
 if TYPE_CHECKING:
     from index import Bot
@@ -50,18 +52,17 @@ class autoposting(commands.Cog, name="ap"):
     def __init__(self, bot: Bot):
         self.bot: Bot = bot
         self.config = imports.get("config.json")
-        self.lunar_headers = {f"{config.lunarapi.header}": f"{config.lunarapi.token}"}
+        self.lunar_headers = {
+            f"{config.lunarapi.header}": f"{config.lunarapi.token}"}
 
     async def send_from_webhook(
         self, webhook: discord.Webhook, embed: discord.Embed
     ) -> None:
         try:
-            from Cogs.admin import PersistentView
-
             await webhook.send(
                 embed=embed,
-                avatar_url=self.bot.user.avatar.url,
-                view=PersistentView(self),  # type: ignore
+                avatar_url=self.bot.user.display_avatar.url,  # type: ignore
+                view=APIImageReporter(),  # type: ignore
             )
         except Exception as e:
             capture_exception(e)
@@ -86,12 +87,11 @@ class autoposting(commands.Cog, name="ap"):
             ]
 
             async with aiohttp.ClientSession() as session:
-                client = Client(session=session, token=config.lunarapi.tokenNew)
+                client = Client(session=session,
+                                token=config.lunarapi.tokenNew)
                 img = await client.request(endpoints.nsfw(random.choice(cats)))
                 data = await img.to_dict()
                 return data["url"]
-
-        from Cogs.admin import PersistentView
 
         posts = 0
         me = self.bot.get_user(101118549958877184) or await self.bot.fetch_user(
@@ -161,7 +161,8 @@ class autoposting(commands.Cog, name="ap"):
                     continue
 
                 # shut the linter still complaining about this
-                assert isinstance(channel, discord.TextChannel)
+                if not isinstance(channel, discord.TextChannel):
+                    raise AssertionError
 
                 # ignore bot lists.
                 if channel.guild.id in BotList_Servers:
@@ -220,7 +221,7 @@ class autoposting(commands.Cog, name="ap"):
                     # try sending to the channel first
                     if isinstance(final_messagable, discord.TextChannel):
                         await final_messagable.send(
-                            embed=embed, view=PersistentView(commands.Context)
+                            embed=embed, view=APIImageReporter()
                         )
                     else:
                         await self.send_from_webhook(final_messagable, embed)
@@ -253,7 +254,8 @@ class autoposting(commands.Cog, name="ap"):
                 color=colors.green,
                 thumbnail=None,
             )
-            comp_embed.set_footer(text=f"Scanned {len(self.bot.guilds)} total entries!")
+            comp_embed.set_footer(
+                text=f"Scanned {len(self.bot.guilds)} total entries!")
             sys = await self.bot.fetch_channel(1004423443833442335)
             await sys.send(embed=comp_embed)
             log(f"Autoposting - Posted Batch: {formatColor(str(posts), 'green')}")

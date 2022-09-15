@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import datetime
 import functools
 import heapq
 import io
 import random
-import secrets
 import unicodedata
 from io import BytesIO
 from typing import TYPE_CHECKING, List, Optional, Tuple, Union
@@ -15,19 +13,19 @@ from typing import TYPE_CHECKING, List, Optional, Tuple, Union
 import aiohttp
 import asyncpraw
 import discord
+import lunarapi
 import matplotlib
 import matplotlib.pyplot as plt
 import nekos
-import lunarapi
-import sentry_sdk
 from discord.ext import commands
 from index import BID, CHAT_API_KEY, Website, colors, config
 from sentry_sdk import capture_exception
 from utils import imports, permissions
-from utils.embeds import EmbedMaker as Embed
 from utils.checks import voter_only
 from utils.common_filters import filter_mass_mentions
 from utils.default import log
+from utils.embeds import EmbedMaker as Embed
+from utils.errors import ChatbotFailure
 
 try:
     import cairosvg
@@ -56,10 +54,9 @@ class MemberConverter(commands.MemberConverter):
             ]
             if len(members) == 1:
                 return members[0]
-            else:
-                raise commands.BadArgument(
-                    f"{len(members)} members found, please be more specific."
-                ) from e
+            raise commands.BadArgument(
+                f"{len(members)} members found, please be more specific."
+            ) from e
 
 
 class Fun(commands.Cog, name="fun"):
@@ -91,8 +88,6 @@ class Fun(commands.Cog, name="fun"):
             user_agent="asyncprawpython",
             username=self.config.rUser,
         )
-        # self.alex_api = alexflipnote.Client(self.config.flipnote)
-        # self.bot.alex_api = self.alex_api
         self.ballresponse = [
             "It is certain.",
             "It is decidedly so.",
@@ -127,29 +122,32 @@ class Fun(commands.Cog, name="fun"):
             "Maybe not",
             "Not sure",
             "Ask again later",
-            "¯\_(ツ)_/¯",
+            r"¯\_(ツ)_/¯",
         ]
+
+    # async def cog_load(self):
+    #     # self.autochatbot_channel_existence.start()
 
     async def cog_unload(self):
         self.session.stop()
         self.reddit.stop()
         self.ttt_games.stop()
         self.params.stop()
+        self.bot.loop.create_task(self.session.close())
 
     def format_help_for_context(self, ctx):
         pre_processed = super().format_help_for_context(ctx)
         return f"{pre_processed}\n\nCog Version: {self.__version__}"
 
-    async def cap_change(self, message: str) -> str:
+    @staticmethod
+    async def cap_change(message: str) -> str:
         return "".join(
             char.upper() if (value := random.choice([True, False])) else char.lower()
             for char in message
         )
 
-    async def cog_unload(self):
-        self.bot.loop.create_task(self.session.close())
-
-    def get_actors(self, bot, offender, target):
+    @staticmethod
+    def get_actors(bot, offender, target):
         return (
             {"id": bot.id, "nick": bot.display_name, "formatted": bot.mention},
             {
@@ -160,8 +158,8 @@ class Fun(commands.Cog, name="fun"):
             {"id": target.id, "nick": target.display_name, "formatted": target.mention},
         )
 
+    @staticmethod
     async def fetch_channel_history(
-        self,
         channel: discord.TextChannel,
         animation_message: discord.Message,
         messages: int,
@@ -243,10 +241,10 @@ class Fun(commands.Cog, name="fun"):
     ):
         plt.clf()
         sizes = [x[1] for x in top]
-        labels = ["{} {:g}%".format(x[0], x[1]) for x in top]
+        labels = [f"{x[0]} {x[1]:g}%" for x in top]
         if len(top) >= 20:
             sizes += [others]
-            labels += ["Others {:g}%".format(others)]
+            labels += [f"Others {others:g}%"]
         if len(channel_or_guild.name) >= 19:
             if isinstance(channel_or_guild, discord.Guild):
                 channel_or_guild_name = f"{channel_or_guild.name[:19]}..."
@@ -297,21 +295,33 @@ class Fun(commands.Cog, name="fun"):
         image_object.seek(0)
         return image_object
 
-    async def get_kitties(self) -> str:
+    @staticmethod
+    async def get_kitties() -> str:
         if random.randint(1, 3) == 1:
             url = nekos.cat()
         else:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    "https://api.thecatapi.com/v1/images/search"
-                ) as r:
-                    data = await r.json()
-                    url = data[0]["url"]
+            async with aiohttp.ClientSession() as session, session.get(
+                "https://api.thecatapi.com/v1/images/search"
+            ) as r:
+                data = await r.json()
+                url = data[0]["url"]
         return url
 
-    @commands.command(use="`tp!optout`")
+    @commands.hybrid_group()
     @permissions.dynamic_ownerbypass_cooldown(1, 5, commands.BucketType.user)
-    async def optout(self, ctx):
+    async def opt(self, ctx):
+        """Opt in or out of bots message history fetching"""
+        if ctx.invoked_subcommand is None:
+            await ctx.send_help(str(ctx.command))
+            return
+        with contextlib.suppress(Exception):
+            await ctx.message.delete()
+        if ctx.invoked_subcommand is None:
+            await ctx.send_help(str(ctx.command))
+
+    @opt.command(name="out")
+    @permissions.dynamic_ownerbypass_cooldown(1, 5, commands.BucketType.user)
+    async def _out(self, ctx):
         """Opt out of the bot's message history fetching"""
         db_user = self.bot.db.get_user(ctx.author.id) or await self.bot.db.fetch_user(
             ctx.author.id
@@ -322,9 +332,9 @@ class Fun(commands.Cog, name="fun"):
         await db_user.modify(msgtracking=False)
         await ctx.send("You have opted out of message tracking!")
 
-    @commands.command(use="`tp!optin`")
+    @opt.command(name="in")
     @permissions.dynamic_ownerbypass_cooldown(1, 5, commands.BucketType.user)
-    async def optin(self, ctx):
+    async def _in(self, ctx):
         """Opt in to the bot's message history fetching"""
         db_user = self.bot.db.get_user(ctx.author.id) or await self.bot.db.fetch_user(
             ctx.author.id
@@ -332,13 +342,13 @@ class Fun(commands.Cog, name="fun"):
         if not db_user:
             db_user = await self.bot.db.add_user(ctx.author.id)
         if db_user.message_tracking:
-            await ctx.send("You are already opted in of message tracking!")
+            await ctx.send("You are already opted into message tracking!")
             return
         await db_user.modify(msgtracking=True)
-        await ctx.send("You have opted in of message tracking!")
+        await ctx.send("You have opted into message tracking")
 
     @commands.guild_only()
-    @commands.command()
+    @commands.hybrid_command()
     @permissions.dynamic_ownerbypass_cooldown(1, 300, commands.BucketType.guild)
     @commands.max_concurrency(1, commands.BucketType.guild)
     @commands.bot_has_permissions(embed_links=True, attach_files=True)
@@ -357,7 +367,7 @@ class Fun(commands.Cog, name="fun"):
         )
         if not db_user or not db_user.message_tracking:
             await ctx.send(
-                "You are opted out of message tracking!\nTo opt back in, use `tp!optin`"
+                "You are opted out of message tracking!\nTo opt back in, use `/optin`"
             )
             return
         channel = channel or ctx.channel  # type: ignore
@@ -401,8 +411,8 @@ class Fun(commands.Cog, name="fun"):
         await ctx.send(file=discord.File(chart, "chart.png"))
 
     @commands.guild_only()
-    @commands.command(aliases=["guildchart"])
-    @permissions.dynamic_ownerbypass_cooldown(1, 2000, commands.BucketType.guild)
+    @commands.hybrid_command(aliases=["guildchart"])
+    @permissions.dynamic_ownerbypass_cooldown(1, 3600, commands.BucketType.guild)
     @commands.max_concurrency(1, commands.BucketType.guild)
     @commands.bot_has_permissions(embed_links=True, attach_files=True)
     async def serverchart(self, ctx, messages: int = 1000):
@@ -411,14 +421,14 @@ class Fun(commands.Cog, name="fun"):
         As example:
         For each channel that the bot is allowed to scan. It will take the last 1000 messages from each channel.
         And proceed to build a chart out of that.
-        This command has a global serverwide cooldown of 2000 seconds.
+        This command has a global serverwide cooldown of 3600 seconds.
         """
         db_user = self.bot.db.get_user(ctx.author.id) or await self.bot.db.fetch_user(
             ctx.author.id
         )
         if not db_user or not db_user.message_tracking:
             await ctx.send(
-                "You are opted out of message tracking!\nTo opt back in, use `tp!optin`"
+                "You are opted out of message tracking!\nTo opt back in, use `/optin`"
             )
             return
         if messages < 5:
@@ -482,32 +492,7 @@ class Fun(commands.Cog, name="fun"):
             await global_fetch_message.delete()
         await ctx.send(file=discord.File(chart, "chart.png"))
 
-    @commands.command()
-    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    async def bonk(self, ctx, user: Union[discord.Member, discord.User] = None):
-        user = user or ctx.author
-        with contextlib.suppress(Exception):
-            await ctx.message.delete()
-        if user != ctx.author:
-            async with aiohttp.ClientSession() as session:
-                async with session.get("https://api.waifu.pics/sfw/bonk") as r:
-                    if r.status == 200:
-                        img = await r.json()
-                        img = img["url"]
-                        emoji = "<a:BONK:825511960741150751>"
-                        embed = Embed(
-                            title="Bonky bonk.",
-                            color=colors.prim,
-                            description=f"**{user}** gets bonked {emoji}",
-                        )
-                        embed.set_image(url=img)
-                        await ctx.send(
-                            embed=embed,
-                        )
-        else:
-            await ctx.send("bonk <a:BONK:825511960741150751>")
-
-    @commands.command()
+    @commands.hybrid_command()
     @commands.bot_has_permissions(embed_links=True)
     @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
     async def enlarge(self, ctx, emoji: str = None):
@@ -580,7 +565,7 @@ class Fun(commands.Cog, name="fun"):
         kwargs = {"parent_width": 1024, "parent_height": 1024}
         return io.BytesIO(cairosvg.svg2png(bytestring=img, **kwargs))
 
-    @commands.command()
+    @commands.hybrid_command()
     @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
     async def chatrevive(self, ctx):
         responces = [
@@ -624,10 +609,12 @@ class Fun(commands.Cog, name="fun"):
         ]
         say = random.choice(responces)
         await Embed(
-            title="Chat Revive", description=say, footer="mc.lunardev.group 1.19.2"
+            title="Chat Revive",
+            description=say,
+            thumbnail=None,
         ).send(ctx)
 
-    @commands.command()
+    @commands.hybrid_command()
     @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
     async def coinflip(self, ctx):
         sides = ["**Heads**", "**Tails**"]
@@ -636,22 +623,14 @@ class Fun(commands.Cog, name="fun"):
             await Embed(
                 title="Coinflip",
                 description="**The coin landed on its side!**",
-                footer="mc.lunardev.group 1.19.2 | (You got a 1/6000 chance of getting this!)",
+                footer="You got a 1/6000 chance of getting this!",
             )
         else:
             await Embed(
                 title="Coinflip",
                 description=randomcoin,
-                footer="mc.lunardev.group 1.19.2",
+                thumbnail=None,
             ).send(ctx)
-
-    # @commands.command(usage="`tp!supreme text`")
-    # @commands.bot_has_permissions(embed_links=True)
-    # @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    # async def supreme(self, ctx, *, text: str):
-    #     """
-    #     Make mockups of the shittiest clothing brand of all time.
-    #     """
 
     #     if len(text) > 25:
     #         return await ctx.send(
@@ -665,14 +644,6 @@ class Fun(commands.Cog, name="fun"):
     #     )
     #     await ctx.send(embed=embed, file=image)
 
-    # @commands.command(usage="`tp!facts text`")
-    # @commands.bot_has_permissions(embed_links=True)
-    # @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    # async def facts(self, ctx, *, text: str):
-    #     """
-    #     And that's a fact.
-    #     """
-
     #     if len(text) > 40:
     #         return await ctx.send(
     #             "The file you tried to render was over 40 characters! Please try again!"
@@ -684,14 +655,6 @@ class Fun(commands.Cog, name="fun"):
     #         await (await self.alex_api.facts(text=text)).read(), "fact.png"
     # )
     #     await ctx.send(embed=embed, file=image)
-
-    # @commands.command(usage="`tp!scroll text`")
-    # @commands.bot_has_permissions(embed_links=True)
-    # @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    # async def scroll(self, ctx, *, text: str):
-    #     """
-    #     The scroll of truth!
-    #     """
 
     #     if len(text) > 40:
     #         return await ctx.send(
@@ -705,14 +668,6 @@ class Fun(commands.Cog, name="fun"):
     # )
     #     await ctx.send(embed=embed, file=image)
 
-    # @commands.command(usage="`tp!calling text`")
-    # @commands.bot_has_permissions(embed_links=True)
-    # @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    # async def calling(self, ctx, *, text: str):
-    #     """
-    #     Tom calling whatever.
-    #     """
-
     #     if len(text) > 70:
     #         return await ctx.send(
     #             "The file you tried to render was over 70 characters! Please try again!"
@@ -725,17 +680,6 @@ class Fun(commands.Cog, name="fun"):
     # )
     #     await ctx.send(embed=embed, file=image)
 
-    # @commands.command(usage="`tp!salty @user`")
-    # @commands.bot_has_permissions(embed_links=True)
-    # @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    # async def salty(self, ctx, user: MemberConverter = None):
-    #     """
-    #     Comparable to the amount of salt on the Atlantic Ocean
-    #     """
-
-    #     if not user:
-    #         user = ctx.author
-
     #     embed = Embed(colour=colors.prim, title=f"{':salt:'*7}").set_image(
     #         url="attachment://salty.png"
     # )
@@ -746,17 +690,6 @@ class Fun(commands.Cog, name="fun"):
     #         await (await self.alex_api.salty(image=user.avatar)).read(), "salty.png"
     # )
     #     await ctx.send(embed=embed, file=image)
-
-    # @commands.command(usage="`tp!shame @user`")
-    # @commands.bot_has_permissions(embed_links=True)
-    # @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    # async def shame(self, ctx, user: MemberConverter = None):
-    #     """
-    #     The dock of shame.
-    #     """
-
-    #     if not user:
-    #         user = ctx.author
 
     #     embed = Embed(colour=colors.prim, title=f"Dock of shame.").set_image(
     #         url="attachment://shame.png"
@@ -769,14 +702,6 @@ class Fun(commands.Cog, name="fun"):
     # )
     #     await ctx.send(embed=embed, file=image)
 
-    # @commands.command(usage="`tp!captcha text`")
-    # @commands.bot_has_permissions(embed_links=True)
-    # @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    # async def captcha(self, ctx, *, text: str):
-    #     """
-    #     Funny captcha image hahaha
-    #     """
-
     #     if len(text) > 25:
     #         return await ctx.send(
     #             "The file you tried to render was over 25 characters! Please try again!"
@@ -788,14 +713,6 @@ class Fun(commands.Cog, name="fun"):
     #         await (await self.alex_api.captcha(text=text)).read(), "captcha.png"
     # )
     #     await ctx.send(embed=embed, file=image)
-
-    # @commands.command(usage="`tp!hex hex_code`")
-    # @commands.bot_has_permissions(embed_links=True)
-    # @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    # async def hex(self, ctx, hex: str):
-    #     """
-    #     Get color information from hex string.
-    #     """
 
     #     try:
     #         if len(hex) == 6:
@@ -815,14 +732,6 @@ class Fun(commands.Cog, name="fun"):
     #             f"Failed to obtain color information. Maybe {hex} isn't a valid code."
     # )
 
-    # @commands.command(usage="`tp!hub text1 text2`")
-    # @commands.bot_has_permissions(embed_links=True)
-    # @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    # async def hub(self, ctx, text1, text2):
-    #     """
-    #     Hehe.
-    #     """
-
     #     if len(text1) > 10 or len(text2) > 10:
     #         return await ctx.send(
     #             "One or both words for the file you tried to render were over 10 characters! Please try again."
@@ -835,14 +744,6 @@ class Fun(commands.Cog, name="fun"):
     #         "hub.png",
     # )
     #     await ctx.send(embed=embed, file=image)
-
-    # @commands.command(usage="`tp!achievement text`", aliases=["ach"])
-    # @commands.bot_has_permissions(embed_links=True)
-    # @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    # async def achievement(self, ctx, *, text: str):
-    #     """
-    #     Le minecraft achievement has arrived.
-    #     """
 
     #     if len(text) > 30:
     #         return await ctx.send(
@@ -857,14 +758,6 @@ class Fun(commands.Cog, name="fun"):
     # )
     #     await ctx.send(embed=embed, file=image)
 
-    # @commands.command(usage="`tp!challenge text`", aliases=["ch"])
-    # @commands.bot_has_permissions(embed_links=True)
-    # @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    # async def challenge(self, ctx, *, text: str):
-    #     """
-    #     Le minecraft challenge has arrived.
-    #     """
-
     #     if len(text) > 40:
     #         return await ctx.send(
     #             "The file you tried to render was over 40 characters! Please try again!"
@@ -878,7 +771,7 @@ class Fun(commands.Cog, name="fun"):
     # )
     #     await ctx.send(embed=embed, file=image)
 
-    @commands.command()
+    @commands.hybrid_command()
     @commands.bot_has_permissions(embed_links=True)
     @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
     async def pp(self, ctx, *, user: MemberConverter = None):
@@ -888,11 +781,10 @@ class Fun(commands.Cog, name="fun"):
         value = f"8{final}D"
         if final == "":
             value = "Doesn't exist."
-        # final = '=' * (user.id % 15)
         await Embed(
             title="pp size",
             description=f"{user.name}'s pp size\n{value}",
-            footer="mc.lunardev.group 1.19.2",
+            thumbnail=None,
         ).send(ctx)
 
     @commands.command(aliases=["bm"], hidden=True)
@@ -911,47 +803,6 @@ class Fun(commands.Cog, name="fun"):
                     except Exception as e:
                         capture_exception(e)
 
-    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    @commands.command(hidden=True)
-    async def troll(self, ctx):
-        await ctx.send(
-            """
-
-⣿⣿⣿⣿⣿⣿⣿⣿⠟⠋⠁⠄⠄⠄⠄⠄⠄⠄⠄⠙⢿⣿⣿⣿⣿⣿⣿⣿⣿
-⣿⣿⣿⣿⣿⣿⡟⠁⠄⠄⠄⠄⣠⣤⣴⣶⣶⣶⣶⣤⡀⠈⠙⢿⣿⣿⣿⣿⣿
-⣿⣿⣿⣿⣿⡟⠄⠄⠄⠄⠄⣸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣆⠄⠈⣿⣿⣿⣿⣿
-⣿⣿⣿⣿⣿⠁⠄⠄⠄⢀⣴⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠄⠄⢺⣿⣿⣿⣿
-⣿⣿⣿⣿⣿⡄⠄⠄⠄⠙⠻⠿⣿⣿⣿⣿⠿⠿⠛⠛⠻⣿⡄⠄⣾⣿⣿⣿⣿
-⣿⣿⣿⣿⣿⡇⠄⠄⠁        ⠄⢹⣿⡗⠄        ⢄⡀⣾⢀⣿⣿⣿⣿⣿⣿
-⣿⣿⣿⣿⣿⡇⠘⠄⠄⠄⢀⡀⠄⣿⣿⣷⣤⣤⣾⣿⣿⣿⣧⢸⣿⣿⣿⣿⣿
-⣿⣿⣿⣿⣿⡇⠄⣰⣿⡿⠟⠃⠄⣿⣿⣿⣿⣿⡛⠿⢿⣿⣷⣾⣿⣿⣿⣿⣿
-⣿⣿⣿⣿⣿⣿⡄⠈⠁⠄⠄⠄⠄⠻⠿⢛⣿⣿⠿⠂⠄⢹⢹⣿⣿⣿⣿⣿⣿
-⣿⣿⣿⣿⣿⣿⣿⡐⠐⠄⠄⣠⣀⣀⣚⣯⣵⣶⠆⣰⠄⠞⣾⣿⣿⣿⣿⣿⣿
-⣿⣿⣿⣿⣿⣿⣿⣷⡄⠄⠄⠈⠛⠿⠿⠿⣻⡏⢠⣿⣎⣾⣿⣿⣿⣿⣿⣿⣿
-⣿⣿⣿⣿⣿⣿⡿⠟⠛⠄⠄⠄⠄⠙⣛⣿⣿⣵⣿⡿⢹⡟⣿⣿⣿⣿⣿⣿⣿
-⣿⠿⠿⠋⠉⠄⠄⠄⠄⠄⠄⠄⣀⣠⣾⣿⣿⣿⡟⠁⠹⡇⣸⣿⣿⣿⣿⣿⣿
-⠁⠄⠄⠄⠄⠄⠄⠄⠄⠄⠄⠄⠄⠙⠿⠿⠛⠋⠄⣸⣦⣠⣿⣿⣿⣿⣿⣿⣿
-"""
-        )
-
-    # @commands.command(usage="`tp!remind <time>`")
-    # @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    # async def remind(self, ctx, time: str, *, reminder: str = None):
-    #     """ Set a reminder for yourself.
-    #     If you want to provide multiple times, encase in quotes, such as:
-    #         tp!remind "1h 20m" Pizza time!
-    #     Can take days (1d), hours (3h), minutes (44m), or seconds (32s)
-    #     Max time provision of weeks (2w)
-    #     """
-
-    #     remind_str = ""
-    #     secs = 0
-
-    #     for item in time.split():
-    #         secs = self.convert_to_seconds(item) + secs
-
-    #     secs_as_timedelta = datetime.timedelta(seconds=secs)
-
     #     if secs == 0:
     #         return ctx.send("Hmm. Looks like you didn't provide a valid time. Please try again.")
     #     embed = Embed(
@@ -964,9 +815,6 @@ class Fun(commands.Cog, name="fun"):
     #     await ctx.send(content="This command will be converted to slash commands before April 30th.", embed=embed)
     #     await asyncio.sleep(secs)
 
-    #     if reminder is not None:
-    #         remind_str = f" - {reminder}"
-
     #     remind_message = Embed(
     #         colour=ctx.author.color,
     #         title=f'Reminder{remind_str}!'
@@ -976,227 +824,118 @@ class Fun(commands.Cog, name="fun"):
     #     except discord.errors.Forbidden:
     #         await ctx.send(f'{ctx.author.mention}', embed=remind_message)
 
-    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    @commands.command(hidden=True)
-    @commands.check(permissions.is_owner)
-    async def math(self, ctx):
-        """Solve simple math problems
-        Example
-        tp!math 2x6 or 2*6
-        ÷ = /
-        x = *
-        • = *
-        = = ==
-        """
-        mem = ctx.author
-        try:
-            problem = str(ctx.message.clean_content.replace(f"{ctx.prefix}math", ""))
-            # If a problem isn't given
-            if not problem:
-                e = Embed(
-                    description="Actually put something for me to solve...",
-                    color=0xFF0000,
-                )
-
-                await ctx.send(embed=e)
-                return
-            #    If the user's problem is too long
-            if len(problem) > 500:
-                e = Embed(description="Too long, try again.", color=0x3498DB)
-                await ctx.send(embed=e)
-                return
-            problem = (
-                problem.replace("÷", "/")
-                .replace("x", "*")
-                .replace("•", "*")
-                .replace("=", "==")
-                .replace("π", "3.14159")
-            )
-            #    Iterate through a string of invalid
-            #    Chracters
-            for letter in "abcdefghijklmnopqrstuvwxyz\\_`,@~<>?|'\"{}[]":
-                # If any of those characters are in user's math
-                if letter in problem:
-                    e = Embed(
-                        description="I can only do simplistic math, adding letters and other characters doesn't work.",
-                        color=0xFF0000,
-                    )
-                    await ctx.send(embed=e)
-                    return
-            #    Make embed
-            e = Embed(timestamp=datetime.datetime.now(datetime.timezone.utc))
-            #    Make fields
-            fields = [
-                ("Problem Given", problem, True),
-                ("Answer", f"{str(round(eval(problem), 4))}", True),
-            ]
-            #    Add the fields
-            for n, v, i in fields:
-                e.add_field(name=n, value=v, inline=i)
-            e.set_footer(text=mem, icon_url=mem.avatar)
-            #    Send embed
-            await ctx.send(embed=e)
-        except Exception as err:
-            capture_exception(err)
-            eventId = sentry_sdk.last_event_id()
-            errorResEmbed = Embed(
-                title="❌ Error!",
-                colour=colors.prim,
-                description=f"The problem couldn't be solved or an unknown error occurred! Report it to the devs :)\n\n**Join the server with your Error ID for support: {config.Server}.**",
-            )
-
-            errorResEmbed.set_footer(text="This error has been automatically logged.")
-            await ctx.send(content=f"**Error ID:** `{eventId}`", embed=errorResEmbed)
-
-    @commands.command()
-    @commands.bot_has_permissions(embed_links=True)
-    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    async def covid(self, ctx, country_code: str = "Global"):
-        """Covid stats. Provide a country via it's ISO code.
-        Common codes:
-                        US: United States
-                        GB: Great Britan,
-                        CN: China,
-                        FR: France,
-                        DE: Germany
-        https://countrycode.org/"""
-        embed = Embed(
-            title="Covid statistics",
-            colour=colors.prim,
-            url=Website,
-        )
-        if len(country_code) > 10:
-            await ctx.send("That doesn't look like a valid country code!")
-            await ctx.send_help(str(ctx.command))
-            return
-        async with aiohttp.ClientSession() as session:
-            async with session.get("https://api.covid19api.com/summary") as resp:
-                resp = await resp.json()
-                if country_code == "Global":
-                    resp = resp["Global"]
-                else:
-                    resp = next(
-                        item
-                        for item in resp["Countries"]
-                        if item["CountryCode"] == country_code.upper()
-                    )
-                    embed.title = f"Covid statistics for {resp['Country']}"
-        # r = requests.get("https://api.covid19api.com/summary")
-        # r= r.json()["Global"]
-        embed.add_field(name="New Cases", value=f'{resp["NewConfirmed"]:,}')
-        embed.add_field(name="New Deaths", value=f'{resp["NewDeaths"]:,}')
-        embed.add_field(name="Newly Recovered", value=f'{resp["NewRecovered"]:,}')
-        embed.add_field(name="Total Confirmed", value=f'{resp["TotalConfirmed"]:,}')
-        embed.add_field(name="Total Deaths", value=f'{resp["TotalDeaths"]:,}')
-        embed.add_field(name="Total Recovered", value=f'{resp["TotalRecovered"]:,}')
-        embed.set_footer(
-            text="Heads up! - Individual countries may not report the same information in the same way."
-        )
-        await ctx.send(
-            embed=embed,
-        )
-
-    @permissions.dynamic_ownerbypass_cooldown(1, 4.5, commands.BucketType.user)
-    @commands.command()
-    async def chat(self, ctx, *, message: str = None):
-        """New and **improved** chat bot!"""
+    @staticmethod
+    async def handle_chatbot(author_id: int, content: str) -> Embed:
         BASE_URL = f"http://api.brainshop.ai/get?bid={BID}&key={CHAT_API_KEY}"
-        async with ctx.channel.typing():
-            if message is None:
-                return await ctx.send(
-                    f"Hello! In order to chat with me use: `{ctx.prefix}chat <message>`"
-                )
-            async with aiohttp.ClientSession() as s:
-                async with s.get(f"{BASE_URL}&uid={ctx.author.id}&msg={message}") as r:
-                    if r.status != 200:
-                        return await ctx.send(
-                            "An error occured while accessing the chat API!"
-                        )
-                    j = await r.json(content_type=None)
-                    await Embed(
-                        title="Chat Bot",
-                        description=j["cnt"],
-                        footer="mc.lunardev.group 1.19.2",
-                    ).send(ctx)
+        url = f"{BASE_URL}&uid={author_id}&msg={content}"
 
-    @commands.Cog.listener(name="on_message")
-    async def autochat(self, message: discord.Message):
-        chat_channel_id = 971893038999797770
-        if message.author.bot:
-            return
-        if message.content == "":
-            return
-        if message.channel.id == chat_channel_id:
-            ctx = await self.bot.get_context(message)
-            await ctx.invoke(self.bot.get_command("chat"), message=message.content)
+        ERROR = ChatbotFailure("An error occured while accessing the chat API!")
+        async with aiohttp.ClientSession() as s, s.get(url) as r:
+            if r.status != 200 or r.content_type != "application/json":
+                raise ERROR
 
-    @commands.command()
-    @commands.bot_has_permissions(embed_links=True)
-    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    async def mock(
-        self,
-        ctx,
-        *,
-        msg: Optional[Union[discord.Message, discord.Member, str]] = None,
-    ) -> None:
-        """
-        Mock a user with the spongebob meme
-        `[msg]` Optional either member, message ID, or string
-        message ID can be channe_id-message-id formatted or a message link
-        if no `msg` is provided the command will use the last message in channel before the command
-        is `msg` is a member it will look through the past 10 messages in
-        the `channel` and put them all together
-        """
-        if isinstance(msg, str):
-            result = await self.cap_change(str(msg))
-            result += f"\n\n[Mocking Message]({ctx.message.jump_url})"
-            author = ctx.message.author
-        elif isinstance(msg, discord.Member):
-            total_msg = ""
-            async for message in ctx.channel.history(limit=10):
-                if message.author == msg:
-                    total_msg += message.content + "\n"
-            result = await self.cap_change(total_msg)
-            author = msg
-        elif isinstance(msg, discord.Message):
-            result = await self.cap_change(msg.content)
-            result += f"\n\n[Mocking Message]({msg.jump_url})"
-            author = msg.author
-            search_msg = msg
-        else:
-            async for message in ctx.channel.history(limit=2):
-                search_msg = message
-            author = search_msg.author
-            result = await self.cap_change(search_msg.content)
-            result += f"\n\n[Mocking Message]({search_msg.jump_url})"
-            if (
-                result == ""
-                and len(search_msg.embeds) != 0
-                and search_msg.embeds[0].description != None
-            ):
-                result = await self.cap_change(search_msg.embeds[0].description)
-        ctx.message.created_at
-        embed = Embed(description=result, timestamp=ctx.message.created_at, url=Website)
-        embed.colour = getattr(author, "colour", discord.Colour.default())
-        embed.set_author(name=author.display_name, icon_url=author.avatar)
-        embed.set_thumbnail(url="https://i.imgur.com/upItEiG.jpg")
-        embed.set_footer(
-            text=f"{ctx.message.author.display_name} mocked {author.display_name}",
-            icon_url=ctx.message.author.avatar,
-        )
-        if hasattr(msg, "attachments") and search_msg.attachments != []:
-            embed.set_image(url=search_msg.attachments[0].url)
-        if ctx.channel.permissions_for(ctx.me).embed_links:
-            await ctx.send(
-                embed=embed,
+            res = await r.json()
+            if "cnt" not in res:
+                raise ERROR
+
+            em = Embed(
+                title="Chat Bot",
+                description=res["cnt"],
+                thumbnail=None,
             )
-            if author != ctx.message.author:
-                await ctx.send(f"- {author.mention}")
+            await s.close()
+            return em
 
-        elif author != ctx.message.author:
-            await ctx.send(f"{result} - {author.mention}")
-        else:
-            await ctx.send(result)
+    #     async with ctx.channel.typing():
+    #         if channel_or_content is None:
+    #             return await ctx.send(
+    #                 (
+    #                     f"Hello! In order to chat with me use: `{ctx.prefix}chat <content>` "
+    #                     f"or to add or change a channel for auto chatting use: `{ctx.prefix}chat <textorvoice_channel>`. "
+    #                     f"For unlinking use: `{ctx.prefix}chat <currently_linked_channel>`."
+    #                 )
+    #             )
+
+    #         db_guild = await self.bot.db.fetch_guild(ctx.guild.id)
+    #         if not db_guild:
+    #             db_guild = await self.bot.db.add_guild(ctx.guild.id)
+
+    #         if isinstance(channel_or_content, str):
+    #             emb = await self.handle_chatbot(ctx.author.id, channel_or_content)
+    #             return await ctx.message.reply(embed=emb, mention_author=True)
+
+    #         if not ctx.author.guild_permissions.manage_channels:
+    #             return await ctx.send(
+    #                 "You don't have the permissions to manage channels!"
+    #             )
+
+    #         if chat_channel_id and channel_or_content.id == chat_channel_id:
+    #             await db_guild.modify(chatbot_channel_id=None)
+    #             return await ctx.send(
+    #                 "That's the currently linked channel.. unlinked it."
+    #             )
+
+    #         # check channel perms
+    #         needed_perms = ("send_messages", "read_messages", "embed_links")
+    #         channel_perms = [
+    #             perm
+    #             for perm, value in channel_or_content.permissions_for(ctx.guild.me)
+    #             if value
+    #         ]
+    #         if missing_perms := [
+    #             perm.replace("_", " ").title()
+    #             for perm in needed_perms
+    #             if perm not in channel_perms
+    #         ]:
+    #             return await ctx.send(
+    #                 f"I'm missing the following permissions to use {channel_or_content.mention} as an auto chatting channel:\n`{', '.join(missing_perms)}`\n"
+    #                 "*Please grant me all of those permissions and try again.*"
+    #             )
+    #         what = "updated" if chat_channel_id else "set"
+    #         await db_guild.modify(chatbot_channel_id=channel_or_content.id)
+    #         await ctx.send(
+    #             f"Successfully {what} the auto chatting channel to {channel_or_content.mention}! Start chatting in the designated channel..."
+    #         )
+    #         return
+
+    #     # ignore if valid command
+    #     if (await self.bot.get_context(message)).valid:
+    #         return
+
+    #     db_guild = self.bot.db.get_guild(
+    #         message.guild.id
+    #     ) or await self.bot.db.fetch_guild(message.guild.id)
+    #     if not db_guild:
+    #         return
+
+    #     chatbotchannel = db_guild.chatbot_channel_id
+    #     if not chatbotchannel:
+    #         return
+
+    #     if message.channel.id != chatbotchannel:
+    #         return
+
+    #     db_user = self.bot.db.get_user(
+    #         message.author.id
+    #     ) or await self.bot.db.fetch_user(message.author.id)
+    #     if not db_user or not db_user.message_tracking:
+    #         return
+    #     try:
+    #         emb = await self.handle_chatbot(message.author.id, message.content)
+    #         await message.reply(embed=emb, mention_author=True)
+    #     except ChatbotFailure:
+    #         return
+
+    #     for entry in all_chat_bot_channels:
+    #         cid = entry["chatbotchannel"]
+    #         if cid := int(cid):
+    #             try:
+    #                 await self.bot.fetch_channel(cid)
+    #             except (discord.HTTPException, discord.NotFound):
+    #                 await self.bot.db.execute(
+    #                     "UPDATE guilds SET chatbotchannel=NULL WHERE chatbotchannel=$1",
+    #                     str(cid),
+    #                 )
 
     @commands.hybrid_group()
     @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
@@ -1222,7 +961,6 @@ class Fun(commands.Cog, name="fun"):
         await Embed(
             title=f"{user1} ❤ {user2}",
             description=ship_name,
-            footer="mc.lunardev.group 1.19.2",
         ).send(ctx)
 
     @ship.command()
@@ -1235,10 +973,20 @@ class Fun(commands.Cog, name="fun"):
         await Embed(
             title=f"{thing1} ❤ {thing2}",
             description=ship_name,
-            footer="mc.lunardev.group 1.19.2",
         ).send(ctx)
 
-    @commands.command()
+    @commands.hybrid_group()
+    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
+    async def actions(self, ctx):
+        """A bunch of fun actions to mess around with"""
+        if ctx.invoked_subcommand is None:
+            return await ctx.send_help(str(ctx.command))
+        with contextlib.suppress(Exception):
+            await ctx.message.delete()
+        if ctx.invoked_subcommand is None:
+            await ctx.send_help(str(ctx.command))
+
+    @actions.command()
     @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
     async def eightball(self, ctx, *, question: commands.clean_content):
         """Ask 8ball"""
@@ -1246,48 +994,76 @@ class Fun(commands.Cog, name="fun"):
             title=f"{ctx.message.author.display_name} asked:",
             description=question,
             image=nekos.img("8ball"),
-            footer="mc.lunardev.group 1.19.2",
         ).send(ctx)
 
-    @commands.command()
-    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    async def spoiler(self, ctx, *, text: str):
-        """Make a message have multiple spoilers"""
-        e = nekos.spoiler(text)
-        await ctx.send(f"{e}\n- {ctx.message.author}")
-
-    @commands.command()
+    @actions.command()
     @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
     async def owoify(self, ctx, *, text: commands.clean_content):
         """Owoify any message"""
         owoified = nekos.owoify(text)
-        await ctx.send(f"{owoified}\n- {ctx.message.author}")
+        embed = Embed(description=owoified, thumbnail=None)
+        await ctx.send(embed=embed)
 
-    @commands.command()
+    @actions.command()
     @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
     async def why(self, ctx):
         """why"""
         why = nekos.why()
-        await ctx.send(why)
+        embed = Embed(description=why, thumbnail=None)
+        await ctx.send(embed=embed)
 
-    @commands.command()
+    @actions.command()
     @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
     async def fact(self, ctx):
         """Get a random fact"""
-        fact = nekos.fact()
-        await ctx.send(fact)
+        async with aiohttp.ClientSession() as session:
+            resp = await session.get("https://useless-facts.sameerkumar.website/api")
+            fact = (await resp.json())["data"]
+        embed = Embed(description=fact, thumbnail=None)
+        await ctx.send(embed=embed)
 
-    @commands.command()
+    @actions.command()
     @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    async def name(self, ctx):
-        """Get a random name"""
-        name = nekos.name()
-        await ctx.send(f"Your name is: {name}")
+    async def insult(self, ctx):
+        """Get a random insult"""
+        async with aiohttp.ClientSession() as session:
+            resp = await session.get(
+                "https://evilinsult.com/generate_insult.php?lang=en&type=json"
+            )
+            insult = (await resp.json())["insult"]
+        embed = Embed(description=insult)
+        await ctx.send(embed=embed)
 
+    @actions.command()
     @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    @commands.command()
+    async def bonk(self, ctx, user: discord.Member = None):
+        user = user or ctx.author
+        with contextlib.suppress(Exception):
+            await ctx.message.delete()
+        if user != ctx.author:
+            async with aiohttp.ClientSession() as session, session.get(
+                "https://api.waifu.pics/sfw/bonk"
+            ) as r:
+                if r.status == 200:
+                    img = await r.json()
+                    img = img["url"]
+                    emoji = "<a:BONK:825511960741150751>"
+                    embed = Embed(
+                        title="Bonky bonk.",
+                        color=colors.prim,
+                        description=f"**{user}** gets bonked {emoji}",
+                    )
+                    embed.set_image(url=img)
+                    await ctx.send(
+                        embed=embed,
+                    )
+        else:
+            await ctx.send("bonk <a:BONK:825511960741150751>")
+
+    @actions.command()
     @commands.guild_only()
     @commands.bot_has_permissions(embed_links=True)
+    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
     async def slap(self, ctx, *, user: MemberConverter):
         """Slap people"""
         user = user or ctx.author
@@ -1295,32 +1071,17 @@ class Fun(commands.Cog, name="fun"):
             await Embed(
                 title="You slapped yourself",
                 image=nekos.img("slap"),
-                footer="mc.lunardev.group 1.19.2",
             ).send(ctx)
         else:
             await Embed(
                 title=f"{ctx.message.author.display_name} slapped {user.display_name}",
                 image=nekos.img("slap"),
-                footer="mc.lunardev.group 1.19.2",
             ).send(ctx)
 
-    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    @commands.command(hidden=True)
-    @commands.bot_has_permissions(embed_links=True)
-    async def pot(self, ctx):
-        embed = Embed(title="bred")
-        embed.add_field(
-            name="How'd you find this lol",
-            value="[Don't click me :flushed:](https://www.youtube.com/watch?v=MwMuEBhgNNE&ab_channel=ShelseaO%27Hanlon)",
-        )
-        await ctx.send(
-            embed=embed,
-        )
-
-    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    @commands.command()
-    @commands.bot_has_permissions(embed_links=True)
+    @actions.command()
     @commands.guild_only()
+    @commands.bot_has_permissions(embed_links=True)
+    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
     async def hug(self, ctx, *, user: MemberConverter):
         """Hug people"""
         user = user or ctx.author
@@ -1328,19 +1089,17 @@ class Fun(commands.Cog, name="fun"):
             await Embed(
                 title="You hugged yourself, kinda sad lol",
                 image=nekos.img("hug"),
-                footer="mc.lunardev.group 1.19.2",
             ).send(ctx)
         else:
             await Embed(
                 title=f"{ctx.message.author.display_name} hugged {user.display_name}",
                 image=nekos.img("hug"),
-                footer="mc.lunardev.group 1.19.2",
             ).send(ctx)
 
-    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    @commands.command()
-    @commands.bot_has_permissions(embed_links=True)
+    @actions.command()
     @commands.guild_only()
+    @commands.bot_has_permissions(embed_links=True)
+    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
     async def kiss(self, ctx, *, user: MemberConverter):
         """Kiss people"""
         user = user or ctx.author
@@ -1354,33 +1113,30 @@ class Fun(commands.Cog, name="fun"):
             await Embed(
                 title=f"You kissed yourself... {random.choice(weird)}",
                 image=nekos.img("kiss"),
-                footer="mc.lunardev.group 1.19.2",
             ).send(ctx)
         else:
             cute = ["awww", "adorable", "cute", "how sweet", "how cute"]
             await Embed(
                 title=f"{ctx.message.author.display_name} kissed {user.display_name}... {random.choice(cute)}",
                 image=nekos.img("kiss"),
-                footer="mc.lunardev.group 1.19.2",
             ).send(ctx)
 
-    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    @commands.command()
-    @commands.bot_has_permissions(embed_links=True)
+    @actions.command()
     @commands.guild_only()
+    @commands.bot_has_permissions(embed_links=True)
+    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
     async def smug(self, ctx, *, user: MemberConverter = None):
         """Look smug"""
         user = user or ctx.author
         await Embed(
             title=f"{user} is smug",
             image=nekos.img("smug"),
-            footer="mc.lunardev.group 1.19.2",
         ).send(ctx)
 
-    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    @commands.command()
-    @commands.bot_has_permissions(embed_links=True)
+    @actions.command()
     @commands.guild_only()
+    @commands.bot_has_permissions(embed_links=True)
+    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
     async def pat(self, ctx, *, user: MemberConverter):
         """Pat people"""
         user = user or ctx.author
@@ -1388,19 +1144,17 @@ class Fun(commands.Cog, name="fun"):
             await Embed(
                 title="You gave yourself a pat... kinda weird ngl",
                 image=nekos.img("pat"),
-                footer="mc.lunardev.group 1.19.2",
             ).send(ctx)
         else:
             await Embed(
                 title=f"{ctx.author.name} gave {user.display_name} a pat",
                 image=nekos.img("pat"),
-                footer="mc.lunardev.group 1.19.2",
             ).send(ctx)
 
-    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    @commands.command()
-    @commands.bot_has_permissions(embed_links=True)
+    @actions.command()
     @commands.guild_only()
+    @commands.bot_has_permissions(embed_links=True)
+    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
     async def tickle(self, ctx, *, user: MemberConverter):
         """Tickle people"""
         user = user or ctx.author
@@ -1408,59 +1162,56 @@ class Fun(commands.Cog, name="fun"):
             await Embed(
                 title="You tickled yourself... kinda weird ngl",
                 image=nekos.img("tickle"),
-                footer="mc.lunardev.group 1.19.2",
             ).send(ctx)
         else:
             await Embed(
                 title=f"{ctx.author.name} tickled {user.name}",
-                footer="mc.lunardev.group 1.19.2",
             ).send(ctx)
 
-    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    @commands.command(aliases=["jump", "murder", "slay"])
-    @commands.bot_has_permissions(embed_links=True)
+    @actions.command()
     @commands.guild_only()
+    @commands.bot_has_permissions(embed_links=True)
+    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
     async def kill(self, ctx, *, user: MemberConverter):
         """Kill someone"""
         user = user or ctx.author
-        kill_msg = [
-            f"{user.name} gets stabbed by a knife from {ctx.author.name}",
-            f"{user.name} gets shot by {ctx.author.name}",
-            f"{user.name} gets executed by {ctx.author.name}",
-            f"{user.name} gets impaled by {ctx.author.name}",
-            f"{user.name} gets burned by {ctx.author.name}",
-            f"{user.name} gets crucified by {ctx.author.name}",
-            f"{user.name} was eaten by {ctx.author.name}",
-            f"{user.name} died from {ctx.author.name}'s awful puns",
-            f"{user.name} was cut in half by {ctx.author.name}",
-            f"{user.name} was hanged by {ctx.author.name}",
-            f"{user.name} was strangled by {ctx.author.name}",
-            f"{user.name} died from a poorly made cupcake by {ctx.author.name}",
-            f"{user.name} died within a couple seconds of getting jumped by {ctx.author.name}",
-            f"{ctx.author.name} 'accidentally' killed {user.name}",
-            f"{ctx.author.name} tried to kill {user.name}, but just missed",
-            f"{ctx.author.name} tried to strangle {user.name}, but it didn't work",
-            f"{ctx.author.name} tripped over their own knife trying to kill {user.name} but killed themselves instead!",
-            f"{ctx.author.name} tried to kill {user.name}, but they didn't have a knife!",
-            f"{ctx.author.name} tried to kill {user.name}, but they were too scared to kill them!",
-            f"{ctx.author.name} absolutely demolished {user.name}'s head with a frying pan!",
-            f"{ctx.author.name} got ratioed so hard {user.name} fucking died 💀",
-            f"{user.name} kicked {ctx.author.name}'s ass so bad they died",
-            f"{user.name} breathed {ctx.author.name}'s air so hard they died",
-            f"{ctx.author.name} inhaled a fart from {user.name} and died",
-            f"{user.name} inhaled a fart from {ctx.author.name} and died",
-        ]
         if user == ctx.author:
             await Embed(
                 title="You killed yourself, hope it was worth it! Now tag someone to kill them!",
-                footer="mc.lunardev.group 1.19.2",
-            ).send(ctx)
-        else:
-            await Embed(
-                title=random.choice(kill_msg), footer="mc.lunardev.group 1.19.2"
             ).send(ctx)
 
-    @commands.command()
+        else:
+            kill_msg = [
+                f"{user.name} gets stabbed by a knife from {ctx.author.name}",
+                f"{user.name} gets shot by {ctx.author.name}",
+                f"{user.name} gets executed by {ctx.author.name}",
+                f"{user.name} gets impaled by {ctx.author.name}",
+                f"{user.name} gets burned by {ctx.author.name}",
+                f"{user.name} gets crucified by {ctx.author.name}",
+                f"{user.name} was eaten by {ctx.author.name}",
+                f"{user.name} died from {ctx.author.name}'s awful puns",
+                f"{user.name} was cut in half by {ctx.author.name}",
+                f"{user.name} was hanged by {ctx.author.name}",
+                f"{user.name} was strangled by {ctx.author.name}",
+                f"{user.name} died from a poorly made cupcake by {ctx.author.name}",
+                f"{user.name} died within a couple seconds of getting jumped by {ctx.author.name}",
+                f"{ctx.author.name} 'accidentally' killed {user.name}",
+                f"{ctx.author.name} tried to kill {user.name}, but just missed",
+                f"{ctx.author.name} tried to strangle {user.name}, but it didn't work",
+                f"{ctx.author.name} tripped over their own knife trying to kill {user.name} but killed themselves instead!",
+                f"{ctx.author.name} tried to kill {user.name}, but they didn't have a knife!",
+                f"{ctx.author.name} tried to kill {user.name}, but they were too scared to kill them!",
+                f"{ctx.author.name} absolutely demolished {user.name}'s head with a frying pan!",
+                f"{ctx.author.name} got ratioed so hard {user.name} fucking died 💀",
+                f"{user.name} kicked {ctx.author.name}'s ass so bad they died",
+                f"{user.name} breathed {ctx.author.name}'s air so hard they died",
+                f"{ctx.author.name} inhaled a fart from {user.name} and died",
+                f"{user.name} inhaled a fart from {ctx.author.name} and died",
+            ]
+
+            await Embed(title=random.choice(kill_msg)).send(ctx)
+
+    @actions.command()
     @voter_only()
     @permissions.dynamic_ownerbypass_cooldown(1, 3, commands.BucketType.user)
     async def meme(self, ctx):
@@ -1476,55 +1227,22 @@ class Fun(commands.Cog, name="fun"):
         url = random_sub.url
         if "https://v" in url:
             return await ctx.send(url)
-        elif "https://streamable.com/" in url:
+        if "https://streamable.com/" in url:
             return
-        elif "https://i.imgur.com/" in url:
+        if "https://i.imgur.com/" in url:
             return await ctx.send(url)
-        elif "https://gfycat.com/" in url:
+        if "https://gfycat.com/" in url:
             return await ctx.send(url)
-        elif "https://imgflip.com/gif/" in url:
+        if "https://imgflip.com/gif/" in url:
             return await ctx.send(url)
-        elif "https://youtu.be/" in url:
+        if "https://youtu.be/" in url:
             return await ctx.send(url)
-        elif "https://youtube.com/" in url:
+        if "https://youtube.com/" in url:
             return await ctx.send(url)
-        await Embed(title=name, image=url, footer="mc.lunardev.group 1.19.2").send(ctx)
+        await Embed(title=name, image=url).send(ctx)
 
-    @commands.guild_only()
-    @commands.command()
-    @commands.bot_has_permissions(embed_links=True)
-    @commands.is_nsfw()
-    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    async def okbr(self, ctx):
-        """god awful memes"""
-        async with ctx.channel.typing():
-            subs = ["okaybuddyretard", "gayspiderbrothel", "shitposting"]
-            subreddit = await self.reddit.subreddit(random.choice(subs))
-            all_subs = []
-            top = subreddit.hot(limit=50)
-            async for submission in top:
-                all_subs.append(submission)
-            random_sub = random.choice(all_subs)
-            name = random_sub.title
-            url = random_sub.url
-            if (
-                "https://v" in url
-                or "https://streamable.com/" not in url
-                and "https://i.imgur.com/" in url
-                or "https://streamable.com/" not in url
-                and "https://gfycat.com/" in url
-                or "https://streamable.com/" not in url
-                and "https://imgflip.com/gif/" in url
-            ):
-                return await ctx.send(url)
-            elif "https://streamable.com/" in url:
-                return
-            await Embed(title=name, url=url, footer="mc.lunardev.group 1.19.2").send(
-                ctx
-            )
-
+    @actions.command()
     @permissions.dynamic_ownerbypass_cooldown(1, 15, commands.BucketType.user)
-    @commands.command()
     async def hack(self, ctx, user: MemberConverter = None):
         """Hack a user, totally real and legit"""
         await ctx.typing()
@@ -1625,65 +1343,77 @@ class Fun(commands.Cog, name="fun"):
             async with ctx.channel.typing():
                 msg1 = await ctx.send(
                     embed=Embed(
-                        description="Initializing Hack.exe... <a:discord_loading:816846352075456512>"
+                        description="Initializing Hack.exe... <a:discord_loading:816846352075456512>",
+                        thumbnail=None,
                     )
                 )
                 await asyncio.sleep(1)
                 await msg1.edit(
                     embed=Embed(
-                        description=f"Successfully initialized Hack.exe, beginning hack on {user.name}... <a:discord_loading:816846352075456512>"
+                        description=f"Successfully initialized Hack.exe, beginning hack on {user.name}... <a:discord_loading:816846352075456512>",
+                        thumbnail=None,
                     )
                 )
                 await asyncio.sleep(1)
                 await msg1.edit(
                     embed=Embed(
-                        description=f"Logging into {user.name}'s Discord Account... <a:discord_loading:816846352075456512>"
+                        description=f"Logging into {user.name}'s Discord Account... <a:discord_loading:816846352075456512>",
+                        thumbnail=None,
                     )
                 )
                 await asyncio.sleep(1)
                 await msg1.edit(
                     embed=Embed(
-                        description=f"<:discord:816846362267090954> Logged into {user.name}'s Discord:\nEmail Address: `{email_address}`\nPassword: `{password}`"
+                        description=f"<:discord:816846362267090954> Logged into {user.name}'s Discord:\nEmail Address: `{email_address}`\nPassword: `{password}`",
+                        thumbnail=None,
                     )
                 )
                 await asyncio.sleep(1)
                 await msg1.edit(
                     embed=Embed(
-                        description="Fetching DMs from their friends(if there are any)... <a:discord_loading:816846352075456512>"
+                        description="Fetching DMs from their friends(if there are any)... <a:discord_loading:816846352075456512>",
+                        thumbnail=None,
                     )
                 )
                 await asyncio.sleep(1)
                 await msg1.edit(
                     embed=Embed(
-                        description=f"Latest DM from {user.name}: `{latest_DM}`"
+                        description=f"Latest DM from {user.name}: `{latest_DM}`",
+                        thumbnail=None,
                     )
                 )
                 await asyncio.sleep(1)
                 await msg1.edit(
                     embed=Embed(
-                        description="Getting IP address... <a:discord_loading:816846352075456512>"
-                    )
-                )
-                await asyncio.sleep(1)
-                await msg1.edit(
-                    embed=Embed(description=f"IP address found: `{ip_address}`")
-                )
-                await asyncio.sleep(1)
-                await msg1.edit(
-                    embed=Embed(
-                        description="Fetching the Most Used Discord Server... <a:discord_loading:816846352075456512>"
+                        description="Getting IP address... <a:discord_loading:816846352075456512>",
+                        thumbnail=None,
                     )
                 )
                 await asyncio.sleep(1)
                 await msg1.edit(
                     embed=Embed(
-                        description=f"Most used Discord Server in {user.name}'s Account: `{Most_Used_Discord_Server}`"
+                        description=f"IP address found: `{ip_address}`", thumbnail=None
                     )
                 )
                 await asyncio.sleep(1)
                 await msg1.edit(
                     embed=Embed(
-                        description="Selling data to the dark web... <a:discord_loading:816846352075456512>"
+                        description="Fetching the Most Used Discord Server... <a:discord_loading:816846352075456512>",
+                        thumbnail=None,
+                    )
+                )
+                await asyncio.sleep(1)
+                await msg1.edit(
+                    embed=Embed(
+                        description=f"Most used Discord Server in {user.name}'s Account: `{Most_Used_Discord_Server}`",
+                        thumbnail=None,
+                    )
+                )
+                await asyncio.sleep(1)
+                await msg1.edit(
+                    embed=Embed(
+                        description="Selling data to the dark web... <a:discord_loading:816846352075456512>",
+                        thumbnail=None,
                     )
                 )
 
@@ -1697,43 +1427,46 @@ class Fun(commands.Cog, name="fun"):
                     )
                 )
 
+    @commands.hybrid_group()
     @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    @commands.hybrid_command()
+    async def animals(self, ctx):
+        """A bunch of fun actions to mess around with"""
+        if ctx.invoked_subcommand is None:
+            return await ctx.send_help(str(ctx.command))
+        with contextlib.suppress(Exception):
+            await ctx.message.delete()
+        if ctx.invoked_subcommand is None:
+            await ctx.send_help(str(ctx.command))
+
+    @animals.command()
     @commands.bot_has_permissions(embed_links=True)
+    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
     async def dog(self, ctx):
         """Puppers"""
-        async with aiohttp.ClientSession() as data:
-            async with data.get("https://api.thedogapi.com/v1/images/search") as r:
-                data = await r.json()
-                breeds = data[0]["breeds"]
-                weight = (
-                    "\n".join(
-                        [f"{a.title()}: {b}" for a, b in breeds[0]["weight"].items()]
-                    )
-                    if breeds
-                    else "Weight Unavailable"
-                )
-                await Embed(
-                    "Enjoy this doggo <3",
-                    url="https://lunardev.group/",
-                    description=f"**Name**\n{breeds[0]['name'] if breeds else 'Name Unavailable'}\n\n**Weight**\n{weight}",
-                    image=data[0]["url"],
-                    footer="mc.lunardev.group 1.19.2",
-                ).send(ctx)
+        async with aiohttp.ClientSession() as data, data.get(
+            "https://api.thedogapi.com/v1/images/search"
+        ) as r:
+            data = await r.json()
+            await Embed(
+                title="Enjoy this doggo <3",
+                url="https://lunardev.group/",
+                image=data[0]["url"],
+                thumbnail=None,
+            ).send(ctx)
 
-    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    @commands.hybrid_command()
+    @animals.command()
     @commands.bot_has_permissions(embed_links=True)
+    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
     async def cat(self, ctx):
         """Kitties!!"""
         await Embed(
             title="Enjoy this kitty <3",
             url=Website,
             image=await self.get_kitties(),
-            footer="mc.lunardev.group 1.19.2",
+            thumbnail=None,
         ).send(ctx)
 
-    @commands.command()
+    @animals.command()
     @commands.bot_has_permissions(embed_links=True)
     @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
     async def birb(self, ctx):
@@ -1742,12 +1475,12 @@ class Fun(commands.Cog, name="fun"):
             title="Enjoy this birb <3",
             url=Website,
             image=nekos.img("goose"),
-            footer="mc.lunardev.group 1.19.2",
+            thumbnail=None,
         ).send(ctx)
 
-    @commands.command()
-    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
+    @commands.hybrid_command()
     @commands.bot_has_permissions(add_reactions=True)
+    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
     async def pressf(self, ctx, *, user: discord.User = None):
         """Pay respects by pressing F"""
         if str(ctx.channel.id) in self.channels:
@@ -1780,7 +1513,6 @@ class Fun(commands.Cog, name="fun"):
         word = "person has" if amount == 1 else "people have"
         await Embed(
             description=f"**{amount}** {word} paid respects to **{filter_mass_mentions(answer)}**.",
-            footer="mc.lunardev.group 1.19.2",
         ).send(ctx)
         del self.channels[str(ctx.channel.id)]
 
@@ -1804,154 +1536,99 @@ class Fun(commands.Cog, name="fun"):
             )
             self.channels[str(reaction.message.channel.id)]["reacted"].append(user.id)
 
-    @commands.command()
-    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    async def lenny(self, ctx):
-        """( ͡° ͜ʖ ͡°)"""
-        await ctx.send("( ͡° ͜ʖ ͡°)")
+    #     @commands.command(hidden=True)
+    #     @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
+    #     async def chad(self, ctx):
+    #         await ctx.send(
+    #             """
+    # ⣿⣿⣿⣿⣿⣿⣿⣿⡿⠿⠛⠛⠛⠋⠉⠈⠉⠉⠉⠉⠛⠻⢿⣿⣿⣿⣿⣿⣿⣿
+    # ⣿⣿⣿⣿⣿⡿⠋⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠛⢿⣿⣿⣿⣿
+    # ⣿⣿⣿⣿⡏⣀⠀⠀⠀⠀⠀⠀⠀⣀⣤⣤⣤⣄⡀⠀⠀⠀⠀⠀⠀⠀⠙⢿⣿⣿
+    # ⣿⣿⣿⢏⣴⣿⣷⠀⠀⠀⠀⠀⢾⣿⣿⣿⣿⣿⣿⡆⠀⠀⠀⠀⠀⠀⠀⠈⣿⣿
+    # ⣿⣿⣟⣾⣿⡟⠁⠀⠀⠀⠀⠀⢀⣾⣿⣿⣿⣿⣿⣷⢢⠀⠀⠀⠀⠀⠀⠀⢸⣿
+    # ⣿⣿⣿⣿⣟⠀⡴⠄⠀⠀⠀⠀⠀⠀⠙⠻⣿⣿⣿⣿⣷⣄⠀⠀⠀⠀⠀⠀⠀⣿
+    # ⣿⣿⣿⠟⠻⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠶⢴⣿⣿⣿⣿⣿⣧⠀⠀⠀⠀⠀⠀⣿
+    # ⣿⣁⡀⠀⠀⢰⢠⣦⠀⠀⠀⠀⠀⠀⠀⠀⢀⣼⣿⣿⣿⣿⣿⡄⠀⣴⣶⣿⡄⣿
+    # ⣿⡋⠀⠀⠀⠎⢸⣿⡆⠀⠀⠀⠀⠀⠀⣴⣿⣿⣿⣿⣿⣿⣿⠗⢘⣿⣟⠛⠿⣼
+    # ⣿⣿⠋⢀⡌⢰⣿⡿⢿⡀⠀⠀⠀⠀⠀⠙⠿⣿⣿⣿⣿⣿⡇⠀⢸⣿⣿⣧⢀⣼
+    # ⣿⣿⣷⢻⠄⠘⠛⠋⠛⠃⠀⠀⠀⠀⠀⢿⣧⠈⠉⠙⠛⠋⠀⠀⠀⣿⣿⣿⣿⣿
+    # ⣿⣿⣧⠀⠈⢸⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠟⠀⠀⠀⠀⢀⢃⠀⠀⢸⣿⣿⣿⣿
+    # ⣿⣿⡿⠀⠴⢗⣠⣤⣴⡶⠶⠖⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⡸⠀⣿⣿⣿⣿
+    # ⣿⣿⣿⡀⢠⣾⣿⠏⠀⠠⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠛⠉⠀⣿⣿⣿⣿
+    # ⣿⣿⣿⣧⠈⢹⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣰⣿⣿⣿⣿
+    # ⣿⣿⣿⣿⡄⠈⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣠⣴⣾⣿⣿⣿⣿⣿
+    # ⣿⣿⣿⣿⣧⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣠⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿
+    # ⣿⣿⣿⣿⣷⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣴⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
+    # ⣿⣿⣿⣿⣿⣦⣄⣀⣀⣀⣀⠀⠀⠀⠀⠘⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
+    # ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⡄⠀⠀⠀⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
+    # ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣧⠀⠀⠀⠙⣿⣿⡟⢻⣿⣿⣿⣿⣿⣿⣿⣿⣿
+    # ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠇⠀⠁⠀⠀⠹⣿⠃⠀⣿⣿⣿⣿⣿⣿⣿⣿⣿
+    # ⣿⣿⣿⣿⣿⣿⣿⣿⡿⠛⣿⣿⠀⠀⠀⠀⠀⠀⠀⠀⢐⣿⣿⣿⣿⣿⣿⣿⣿⣿
+    # ⣿⣿⣿⣿⠿⠛⠉⠉⠁⠀⢻⣿⡇⠀⠀⠀⠀⠀⠀⢀⠈⣿⣿⡿⠉⠛⠛⠛⠉⠉
+    # ⣿⡿⠋⠁⠀⠀⢀⣀⣠⡴⣸⣿⣇⡄⠀⠀⠀⠀⢀⡿⠄⠙⠛⠀⣀⣠⣤⣤⠄
+    # 					"""
+    #         )
 
-    @commands.command(hidden=True)
-    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    async def coom(self, ctx):
-        await ctx.send("https://www.youtube.com/watch?v=yvWUDNsZXwA")
+    #     @commands.command(hidden=True)
+    #     @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
+    #     async def sussy(self, ctx):
+    #         if random.randint(1, 2) == 1:
+    #             await ctx.send(
+    #                 """
+    # ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣤⣤⣤⣤⣤⣶⣦⣤⣄⡀⠀⠀⠀⠀⠀⠀⠀⠀
+    # ⠀⠀⠀⠀⠀⠀⠀⠀⢀⣴⣿⡿⠛⠉⠙⠛⠛⠛⠛⠻⢿⣿⣷⣤⡀⠀⠀⠀⠀⠀
+    # ⠀⠀⠀⠀⠀⠀⠀⠀⣼⣿⠋⠀⠀⠀⠀⠀⠀⠀⢀⣀⣀⠈⢻⣿⣿⡄⠀⠀⠀⠀
+    # ⠀⠀⠀⠀⠀⠀⠀⣸⣿⡏⠀⠀⠀⣠⣶⣾⣿⣿⣿⠿⠿⠿⢿⣿⣿⣿⣄⠀⠀⠀
+    # ⠀⠀⠀⠀⠀⠀⠀⣿⣿⠁⠀⠀⢰⣿⣿⣯⠁⠀⠀⠀⠀⠀⠀⠀⠈⠙⢿⣷⡄⠀
+    # ⠀⠀⣀⣤⣴⣶⣶⣿⡟⠀⠀⠀⢸⣿⣿⣿⣆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣷⠀
+    # ⠀⢰⣿⡟⠋⠉⣹⣿⡇⠀⠀⠀⠘⣿⣿⣿⣿⣷⣦⣤⣤⣤⣶⣶⣶⣶⣿⣿⣿⠀
+    # ⠀⢸⣿⡇⠀⠀⣿⣿⡇⠀⠀⠀⠀⠹⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠃⠀
+    # ⠀⣸⣿⡇⠀⠀⣿⣿⡇⠀⠀⠀⠀⠀⠉⠻⠿⣿⣿⣿⣿⡿⠿⠿⠛⢻⣿⡇⠀⠀
+    # ⠀⣿⣿⠁⠀⠀⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⣧⠀⠀
+    # ⠀⣿⣿⠀⠀⠀⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⣿⠀⠀
+    # ⠀⣿⣿⠀⠀⠀⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⣿⠀⠀
+    # ⠀⢿⣿⡆⠀⠀⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⡇⠀⠀
+    # ⠀⠸⣿⣧⡀⠀⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣿⠃⠀⠀
+    # ⠀⠀⠛⢿⣿⣿⣿⣿⣇⠀⠀⠀⠀⠀⣰⣿⣿⣷⣶⣶⣶⣶⠶⠀⢠⣿⣿⠀⠀⠀
+    # ⠀⠀⠀⠀⠀⠀⠀⣿⣿⠀⠀⠀⠀⠀⣿⣿⡇⠀⣽⣿⡏⠁⠀⠀⢸⣿⡇⠀⠀⠀
+    # ⠀⠀⠀⠀⠀⠀⠀⣿⣿⠀⠀⠀⠀⠀⣿⣿⡇⠀⢹⣿⡆⠀⠀⠀⣸⣿⠇⠀⠀⠀
+    # ⠀⠀⠀⠀⠀⠀⠀⢿⣿⣦⣄⣀⣠⣴⣿⣿⠁⠀⠈⠻⣿⣿⣿⣿⡿⠏⠀⠀⠀⠀
+    # ⠀⠀⠀⠀⠀⠀⠀⠈⠛⠻⠿⠿⠿⠿⠋⠁⠀
+    # 						   """
+    #             )
+    #         else:
+    #             await ctx.send(
+    #                 """
+    # ⠀       ⠀⠀⠀⣠⠤⠖⠚⠛⠉⠛⠒⠒⠦⢤
+    # ⠀⠀⠀⠀⣠⠞⠁⠀⠀⠠⠒⠂⠀⠀⠀⠀⠀⠉⠳⡄
+    # ⠀⠀⠀⢸⠇⠀⠀⠀⢀⡄⠤⢤⣤⣤⡀⢀⣀⣀⣀⣹⡄
+    # ⠀⠀⠀⠘⢧⠀⠀⠀⠀⣙⣒⠚⠛⠋⠁⡈⠓⠴⢿⡿⠁
+    # ⠀⠀⠀⠀⠀⠙⠒⠤⢀⠛⠻⠿⠿⣖⣒⣁⠤⠒⠋
+    # ⠀⠀⠀⠀⠀⢀⣀⣀⠼⠀⠈⣻⠋⠉⠁ A M O G U S
+    # ⠀⠀⠀⡴⠚⠉⠀⠀⠀⠀⠀⠈⠀⠐⢦
+    # ⠀⠀⣸⠃⠀⡴⠋⠉⠀⢄⣀⠤⢴⠄⠀⡇
+    # ⠀⢀⡏⠀⠀⠹⠶⢀⡔⠉⠀⠀⣼⠀⠀⡇
+    # ⠀⣼⠁⠀⠙⠦⣄⡀⣀⡤⠶⣉⣁⣀⠘
+    # ⢀⡟⠀⠀⠀⠀⠀⠁⠀⠀⠀⠀⣽
+    # ⢸⠇⠀⠀⠀⢀⡤⠦⢤⡄⠀⠀⡟
+    # ⢸⠀⠀⠀⠀⡾⠀⠀⠀⡿⠀⠀⣇⣀⣀
+    # ⢸⠀⠀⠈⠉⠓⢦⡀⢰⣇⡀⠀⠉⠀⠀⣉⠇
+    # ⠈⠓⠒⠒⠀⠐⠚⠃⠀⠈⠉⠉⠉⠉⠉⠁
+    # """
+    #             )
 
-    @commands.command(hidden=True)
-    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    async def cmputer(self, ctx):
-        await ctx.send(
-            "https://cdn.discordapp.com/attachments/976866146391306260/1005275242412908544/unknown.png"
-        )
-
-    @commands.command(hidden=True)
-    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    async def furry(self, ctx):
-        message = await ctx.send(":3")
-        await asyncio.sleep(0.5)
-        await message.edit(content=";3")
-        await asyncio.sleep(0.5)
-        await message.edit(content=":)")
-
-    @commands.command(hidden=True)
-    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    async def chad(self, ctx):
-        await ctx.send(
-            """
-⣿⣿⣿⣿⣿⣿⣿⣿⡿⠿⠛⠛⠛⠋⠉⠈⠉⠉⠉⠉⠛⠻⢿⣿⣿⣿⣿⣿⣿⣿
-⣿⣿⣿⣿⣿⡿⠋⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠛⢿⣿⣿⣿⣿
-⣿⣿⣿⣿⡏⣀⠀⠀⠀⠀⠀⠀⠀⣀⣤⣤⣤⣄⡀⠀⠀⠀⠀⠀⠀⠀⠙⢿⣿⣿
-⣿⣿⣿⢏⣴⣿⣷⠀⠀⠀⠀⠀⢾⣿⣿⣿⣿⣿⣿⡆⠀⠀⠀⠀⠀⠀⠀⠈⣿⣿
-⣿⣿⣟⣾⣿⡟⠁⠀⠀⠀⠀⠀⢀⣾⣿⣿⣿⣿⣿⣷⢢⠀⠀⠀⠀⠀⠀⠀⢸⣿
-⣿⣿⣿⣿⣟⠀⡴⠄⠀⠀⠀⠀⠀⠀⠙⠻⣿⣿⣿⣿⣷⣄⠀⠀⠀⠀⠀⠀⠀⣿
-⣿⣿⣿⠟⠻⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠶⢴⣿⣿⣿⣿⣿⣧⠀⠀⠀⠀⠀⠀⣿
-⣿⣁⡀⠀⠀⢰⢠⣦⠀⠀⠀⠀⠀⠀⠀⠀⢀⣼⣿⣿⣿⣿⣿⡄⠀⣴⣶⣿⡄⣿
-⣿⡋⠀⠀⠀⠎⢸⣿⡆⠀⠀⠀⠀⠀⠀⣴⣿⣿⣿⣿⣿⣿⣿⠗⢘⣿⣟⠛⠿⣼
-⣿⣿⠋⢀⡌⢰⣿⡿⢿⡀⠀⠀⠀⠀⠀⠙⠿⣿⣿⣿⣿⣿⡇⠀⢸⣿⣿⣧⢀⣼
-⣿⣿⣷⢻⠄⠘⠛⠋⠛⠃⠀⠀⠀⠀⠀⢿⣧⠈⠉⠙⠛⠋⠀⠀⠀⣿⣿⣿⣿⣿
-⣿⣿⣧⠀⠈⢸⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠟⠀⠀⠀⠀⢀⢃⠀⠀⢸⣿⣿⣿⣿
-⣿⣿⡿⠀⠴⢗⣠⣤⣴⡶⠶⠖⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⡸⠀⣿⣿⣿⣿
-⣿⣿⣿⡀⢠⣾⣿⠏⠀⠠⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠛⠉⠀⣿⣿⣿⣿
-⣿⣿⣿⣧⠈⢹⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣰⣿⣿⣿⣿
-⣿⣿⣿⣿⡄⠈⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣠⣴⣾⣿⣿⣿⣿⣿
-⣿⣿⣿⣿⣧⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣠⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿
-⣿⣿⣿⣿⣷⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣴⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
-⣿⣿⣿⣿⣿⣦⣄⣀⣀⣀⣀⠀⠀⠀⠀⠘⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
-⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⡄⠀⠀⠀⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
-⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣧⠀⠀⠀⠙⣿⣿⡟⢻⣿⣿⣿⣿⣿⣿⣿⣿⣿
-⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠇⠀⠁⠀⠀⠹⣿⠃⠀⣿⣿⣿⣿⣿⣿⣿⣿⣿
-⣿⣿⣿⣿⣿⣿⣿⣿⡿⠛⣿⣿⠀⠀⠀⠀⠀⠀⠀⠀⢐⣿⣿⣿⣿⣿⣿⣿⣿⣿
-⣿⣿⣿⣿⠿⠛⠉⠉⠁⠀⢻⣿⡇⠀⠀⠀⠀⠀⠀⢀⠈⣿⣿⡿⠉⠛⠛⠛⠉⠉
-⣿⡿⠋⠁⠀⠀⢀⣀⣠⡴⣸⣿⣇⡄⠀⠀⠀⠀⢀⡿⠄⠙⠛⠀⣀⣠⣤⣤⠄
-					"""
-        )
-
-    @commands.command(hidden=True)
-    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    async def sussy(self, ctx):
-        if random.randint(1, 2) == 1:
-            await ctx.send(
-                """
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣤⣤⣤⣤⣤⣶⣦⣤⣄⡀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⢀⣴⣿⡿⠛⠉⠙⠛⠛⠛⠛⠻⢿⣿⣷⣤⡀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⣼⣿⠋⠀⠀⠀⠀⠀⠀⠀⢀⣀⣀⠈⢻⣿⣿⡄⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⣸⣿⡏⠀⠀⠀⣠⣶⣾⣿⣿⣿⠿⠿⠿⢿⣿⣿⣿⣄⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⣿⣿⠁⠀⠀⢰⣿⣿⣯⠁⠀⠀⠀⠀⠀⠀⠀⠈⠙⢿⣷⡄⠀
-⠀⠀⣀⣤⣴⣶⣶⣿⡟⠀⠀⠀⢸⣿⣿⣿⣆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣷⠀
-⠀⢰⣿⡟⠋⠉⣹⣿⡇⠀⠀⠀⠘⣿⣿⣿⣿⣷⣦⣤⣤⣤⣶⣶⣶⣶⣿⣿⣿⠀
-⠀⢸⣿⡇⠀⠀⣿⣿⡇⠀⠀⠀⠀⠹⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠃⠀
-⠀⣸⣿⡇⠀⠀⣿⣿⡇⠀⠀⠀⠀⠀⠉⠻⠿⣿⣿⣿⣿⡿⠿⠿⠛⢻⣿⡇⠀⠀
-⠀⣿⣿⠁⠀⠀⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⣧⠀⠀
-⠀⣿⣿⠀⠀⠀⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⣿⠀⠀
-⠀⣿⣿⠀⠀⠀⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⣿⠀⠀
-⠀⢿⣿⡆⠀⠀⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⡇⠀⠀
-⠀⠸⣿⣧⡀⠀⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣿⠃⠀⠀
-⠀⠀⠛⢿⣿⣿⣿⣿⣇⠀⠀⠀⠀⠀⣰⣿⣿⣷⣶⣶⣶⣶⠶⠀⢠⣿⣿⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⣿⣿⠀⠀⠀⠀⠀⣿⣿⡇⠀⣽⣿⡏⠁⠀⠀⢸⣿⡇⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⣿⣿⠀⠀⠀⠀⠀⣿⣿⡇⠀⢹⣿⡆⠀⠀⠀⣸⣿⠇⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⢿⣿⣦⣄⣀⣠⣴⣿⣿⠁⠀⠈⠻⣿⣿⣿⣿⡿⠏⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠈⠛⠻⠿⠿⠿⠿⠋⠁⠀
-						   """
-            )
-        else:
-            await ctx.send(
-                """
-⠀       ⠀⠀⠀⣠⠤⠖⠚⠛⠉⠛⠒⠒⠦⢤
-⠀⠀⠀⠀⣠⠞⠁⠀⠀⠠⠒⠂⠀⠀⠀⠀⠀⠉⠳⡄
-⠀⠀⠀⢸⠇⠀⠀⠀⢀⡄⠤⢤⣤⣤⡀⢀⣀⣀⣀⣹⡄
-⠀⠀⠀⠘⢧⠀⠀⠀⠀⣙⣒⠚⠛⠋⠁⡈⠓⠴⢿⡿⠁
-⠀⠀⠀⠀⠀⠙⠒⠤⢀⠛⠻⠿⠿⣖⣒⣁⠤⠒⠋
-⠀⠀⠀⠀⠀⢀⣀⣀⠼⠀⠈⣻⠋⠉⠁ A M O G U S
-⠀⠀⠀⡴⠚⠉⠀⠀⠀⠀⠀⠈⠀⠐⢦
-⠀⠀⣸⠃⠀⡴⠋⠉⠀⢄⣀⠤⢴⠄⠀⡇
-⠀⢀⡏⠀⠀⠹⠶⢀⡔⠉⠀⠀⣼⠀⠀⡇
-⠀⣼⠁⠀⠙⠦⣄⡀⣀⡤⠶⣉⣁⣀⠘
-⢀⡟⠀⠀⠀⠀⠀⠁⠀⠀⠀⠀⣽
-⢸⠇⠀⠀⠀⢀⡤⠦⢤⡄⠀⠀⡟
-⢸⠀⠀⠀⠀⡾⠀⠀⠀⡿⠀⠀⣇⣀⣀
-⢸⠀⠀⠈⠉⠓⢦⡀⢰⣇⡀⠀⠉⠀⠀⣉⠇
-⠈⠓⠒⠒⠀⠐⠚⠃⠀⠈⠉⠉⠉⠉⠉⠁
-"""
-            )
-
-    @commands.command()
-    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    async def reverse(self, ctx, *, text: str):
-        """Reverses things"""
-        t_rev = text[::-1].replace("@", "@‎").replace("&", "&‎")
-        await Embed(
-            f"Reversed {text}",
-            description=f"🔁 {t_rev}",
-            footer="mc.lunardev.group 1.19.2",
-        ).send(ctx)
-
-    @commands.command()
-    @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    async def password(self, ctx, nbytes: int = 40):
-        """Generates a random password string for you
-        This returns a random URL-safe text string, containing nbytes random bytes.
-        The text is Base64 encoded, so on average each byte results in approximately 1.3 characters.
-        """
-        if nbytes not in range(3, 1001):
-            return await ctx.send("I only accept any numbers between 3-1000")
-        if hasattr(ctx, "guild") and ctx.guild is not None:
-            await ctx.send(
-                f"Alright, lemme send you this randomly generated password {ctx.author.mention}."
-            )
-        await ctx.author.send(
-            f"🎁 **Here is your password:**\n{secrets.token_urlsafe(nbytes)}\n\n**You could actually use this password for things too since this was completely randomly generated.**"
-        )
-
-    @commands.command()
+    @commands.hybrid_command()
     @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
     async def rate(self, ctx, *, thing: commands.clean_content):
         """Rates what you want"""
         rate_amount = random.uniform(0.0, 100.0)
         await Embed(
             description=f"I'd rate `{thing}` a **{round(rate_amount, 4)} / 100**",
-            footer="mc.lunardev.group 1.19.2",
+            thumbnail=None,
         ).send(ctx)
 
     @permissions.dynamic_ownerbypass_cooldown(1, 2.5, type=commands.BucketType.user)
-    @commands.command()
+    @commands.hybrid_command()
     async def hotcalc(self, ctx, *, user: MemberConverter = None):
         """Returns a random percent for how hot is a discord user"""
         user = user or ctx.author
@@ -1968,11 +1645,11 @@ class Fun(commands.Cog, name="fun"):
             emoji = "💞"
         await Embed(
             description=f"**{user.name}** is **{hot:.2f}%** hot {emoji}",
-            footer="mc.lunardev.group 1.19.2",
+            thumbnail=None,
         ).send(ctx)
 
     @permissions.dynamic_ownerbypass_cooldown(1, 2.5, type=commands.BucketType.user)
-    @commands.command()
+    @commands.hybrid_command()
     async def howgay(self, ctx, *, user: MemberConverter = None):
         """Tells you how gay a user is lol."""
         user = user or ctx.author
@@ -1994,11 +1671,32 @@ class Fun(commands.Cog, name="fun"):
             emoji = "<:stop_pls:838988169251782666>"
         await Embed(
             description=f"**{user.name}** is **{gay:.2f}%** gay {emoji}",
-            footer="mc.lunardev.group 1.19.2",
+            thumbnail=None,
         ).send(ctx)
 
     @permissions.dynamic_ownerbypass_cooldown(1, 2.5, type=commands.BucketType.user)
-    @commands.command()
+    @commands.hybrid_command()
+    async def sus(self, ctx, *, user: MemberConverter = None):
+        """Tells you how sus someone is"""
+        user = user or ctx.author
+        if user.id == self.bot.user.id:
+            return await ctx.send("I'm a bot lmao.")
+        r = random.randint(1, 100)
+        sus = r / 1.17
+        emoji = "<:troll1:1014268415365623860>"
+        if sus > 25:
+            emoji = "<:troll2:1014268439096991836>"
+        if sus > 50:
+            emoji = "<:troll3:1014268459951063162>"
+        if sus > 75:
+            emoji = "<:troll4:1014268464946479156>"
+        await Embed(
+            description=f"**{user.name}** is **{sus:.2f}%** sus {emoji}",
+            thumbnail=None,
+        ).send(ctx)
+
+    @permissions.dynamic_ownerbypass_cooldown(1, 2.5, type=commands.BucketType.user)
+    @commands.hybrid_command()
     async def simp(self, ctx, *, user: MemberConverter = None):
         """Tells you if a user is a simp lol."""
         user = user or ctx.author
@@ -2017,11 +1715,11 @@ class Fun(commands.Cog, name="fun"):
             emoji = "<:stop_pls:838988169251782666>"
         await Embed(
             description=f"**{user.name}** is **{simp:.2f}%** simp {emoji}",
-            footer="mc.lunardev.group 1.19.2",
+            thumbnail=None,
         ).send(ctx)
 
     @permissions.dynamic_ownerbypass_cooldown(1, 2.5, type=commands.BucketType.user)
-    @commands.command()
+    @commands.hybrid_command()
     async def horny(self, ctx, *, user: MemberConverter = None):
         """Tells you how horny someone is :flushed:"""
         user = user or ctx.author
@@ -2046,18 +1744,15 @@ class Fun(commands.Cog, name="fun"):
             emoji = "<:stop_pls:838988169251782666>"
         await Embed(
             description=f"**{user.name}** is **{horny:.2f}%** horny {emoji}",
-            footer="mc.lunardev.group 1.19.2",
+            thumbnail=None,
         ).send(ctx)
 
     @commands.hybrid_group(name="gen")
     async def gen(self, ctx: commands.Context):
-        """
-        Image generation commands
-        """
+        """Image generation commands"""
         await Embed(
             "Image Generation Commands",
-            description="Looking for `tp!gen`? Well, these are slash commands!\nType `/gen` to get started with a list of these ones :eyes:",
-            footer="mc.lunardev.group 1.19.2",
+            description="Looking for `/gen`? Well, these are slash commands!\nType `/gen` to get started with a list of these ones :eyes:",
         ).send(ctx)
 
     @gen.command()

@@ -14,6 +14,7 @@ import subprocess
 import textwrap
 import time
 import traceback
+import pathlib
 from contextlib import redirect_stdout, suppress
 from subprocess import check_output
 from typing import TYPE_CHECKING, Literal, Optional
@@ -23,19 +24,20 @@ import discord
 import httpx
 import speedtest
 from discord.ext import commands
-from index import colors, delay
+from discord import app_commands
+from discord.app_commands import Choice
+from index import colors, delay, logger
 from Manager.database import Connection
 from Manager.logger import formatColor
 from Manager.objects import Table
 from sentry_sdk import capture_exception
 from utils import default, imports, permissions
-from utils.embeds import EmbedMaker as Embed
 from utils.default import log
+from utils.embeds import EmbedMaker as Embed
 from utils.errors import BlacklistedUser
 
 from .Utils import random
 
-# from utils.checks import InteractiveMenu
 OS = discord.Object(id=975810661709922334)
 
 if TYPE_CHECKING:
@@ -144,54 +146,6 @@ class EvalView(discord.ui.View):
         self.stop()
 
 
-class PersistentView(discord.ui.View):
-    def __init__(self, ctx: commands.Context):
-        super().__init__(timeout=None)
-        self.ctx = ctx
-
-    @discord.ui.button(
-        label="Report to Developers",
-        style=discord.ButtonStyle.blurple,
-        custom_id="AGBCustomID",
-    )
-    async def report(self, i: discord.Interaction, b: discord.ui.Button):
-        guild = await i.client.fetch_guild(975810661709922334)
-        bruh = await guild.fetch_channel(990187200656322601)
-        # get the embeds image url
-        embed_image = i.message.embeds[0].image.url
-        async with aiohttp.ClientSession() as session:
-            async with session.get(embed_image) as resp:
-                if resp.status == 200:
-                    await bruh.send(f"{embed_image} reported by {i.user.id}")
-                    # disable the button once its been used
-                    b.disabled = True
-                    await i.response.edit_message(view=self)
-                    await i.followup.send(
-                        "Thank you for reporting this image, we trust that you reported it correctly; by following our rules, we will take action against any image that is deemed to be in violation of our rules.\nImages are eligible for reporting if they are in violation of our following rules:\n__*__ Not porn(not actual porn, lewd / suggestive positions and actions, etc)\n__*__ Gross(scat, gore, rape, etc)\n__*__ Breaks ToS(shota, loli, etc)",
-                        ephemeral=True,
-                    )
-                else:
-                    await i.response.edit_message(view=self)
-                    await i.followup.send(
-                        "Report failed.\nThe image you sent was not found in the api.",
-                        ephemeral=True,
-                    )
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        db = interaction.client.db
-        user_id = interaction.user.id
-        blacklisted_user = await db.fetch_blacklist(user_id)
-
-        if blacklisted_user and blacklisted_user.is_blacklisted:
-            await interaction.response.send_message(
-                f"You are blacklisted from using this bot for the following reason\n`{blacklisted_user.reason}`",
-                ephemeral=True,
-            )
-            return False
-
-        return True
-
-
 class InteractiveMenu(discord.ui.View):
     def __init__(self, ctx: commands.Context):
         super().__init__(timeout=30)
@@ -226,7 +180,7 @@ class InteractiveMenu(discord.ui.View):
         await interaction.response.send_message("Not your command", ephemeral=True)
 
 
-class Admin(commands.Cog, name="admin", command_attrs=dict()):
+class Admin(commands.Cog, name="admin", command_attrs={}):
     """Commands that arent for you lol"""
 
     def __init__(self, bot: Bot) -> None:
@@ -251,13 +205,21 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
             "naw": False,
             "nah": False,
         }
-        self.email_re = "^[a-z0-9]+[\._]?[a-z0-9]+[@]\w+[.]\w{2,3}$"
+        self.email_re = r"^[a-z0-9]+[\._]?[a-z0-9]+[@]\w+[.]\w{2,3}$"
         self.blacklisted = False
 
         bot.add_check(self.blacklist_check)
         self.nword_re = r"\b(n|m|и|й){1,32}(i|1|l|!|ᴉ|¡){1,32}((g|ƃ|6|б{2,32}|q){1,32}|[gqgƃ6б]{2,32})(a|e|3|з|u)(r|Я|s|5|$){1,32}\b"
         self.nword_re_comp = re.compile(self.nword_re, re.IGNORECASE | re.UNICODE)
         self.afks = {}
+
+        self.CONTAINERS = {
+            "AGB": "f3624f10a30fad7d2b98914dd47a5035ab66dc9cbae8347b50937a232ae0b8b6",
+            "PgAdmin": "3f4c0f8fcaf6cd557c4a5fe23c0ecd214fa37eeeaee24f16433397a5aa7cca17",
+            "Status Page": "5f2c8d1b1b8e7909bae2024586c67bc0693585d0faf12845beff62fbc7a6ed9e",
+            "Minecraft Server": "62c60c804abff8443d02b471a15e8b9e31236e6fded5b79842ed5269b94b1953",
+            "Website": "7655ad002f43a9f268cd3bc38c8c2b2d49d30ab9fc36b620eecd84918d829a0d",
+        }
 
         self.errors = (
             commands.NoPrivateMessage,
@@ -275,15 +237,14 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
             commands.BadBoolArgument,
         )
 
-    async def remove_images(self, rmcode):
+    async def remove_images(self, rmcode: str) -> None:
         async with aiohttp.ClientSession(
             headers={"Authorization": f"Bearer {self.config.lunarapi.tokenNew}"}
-        ) as session:
-            async with session.get(
-                f"https://api.lunardev.group/admin/apirm?password={self.config.lunarapi.adminPass}&rmcode={rmcode}"
-            ) as resp:
-                if resp.status == 200:
-                    return
+        ) as session, session.get(
+            f"https://api.lunardev.group/admin/apirm?password={self.config.lunarapi.adminPass}&rmcode={rmcode}"
+        ) as resp:
+            if resp.status == 200:
+                return
 
     async def blacklist_check(self, ctx: commands.Context):
         bl = await self.bot.db.fetch_blacklist(ctx.author.id, cache=True)
@@ -308,13 +269,15 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
             result = await self.bot.loop.run_in_executor(None, process.communicate)
         return [output.decode() for output in result]
 
-    def cleanup_code(self, content):
+    @staticmethod
+    def cleanup_code(content):
         """Automatically removes code blocks from the code."""
         if content.startswith("```") and content.endswith("```"):
             return "\n".join(content.split("\n")[1:-1])
         return content.strip("` \n")
 
-    async def try_to_send_msg_in_a_channel(self, guild, msg):
+    @staticmethod
+    async def try_to_send_msg_in_a_channel(guild, msg):
         for channel in guild.channels:
             with suppress(Exception):
                 await channel.send(msg)
@@ -342,10 +305,9 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
                 ]
                 if len(members) == 1:
                     return members[0]
-                else:
-                    raise commands.BadArgument(
-                        f"{len(members)} members found, please be more specific."
-                    ) from e
+                raise commands.BadArgument(
+                    f"{len(members)} members found, please be more specific."
+                ) from e
 
     async def get_or_remove_users_from_database(
         self,
@@ -362,7 +324,7 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
         remove_from = [
             Table.BADGES,
             Table.BLACKLIST,
-            Table.REMINDERS,
+            # Table.REMINDERS,
             Table.USER_ECONOMY,
             Table.USERS,
         ]
@@ -381,7 +343,10 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
 
                 query = f"DELETE FROM {table} WHERE {user_id_key} = $1"
                 await self.bot.db.executemany(
-                    query, [str(user_id) for user_id in user_ids]
+                    query,
+                    table,
+                    user_id_key,
+                    *[tuple(str(user_id)) for user_id in user_ids],
                 )
 
         if action == "GET":
@@ -475,23 +440,10 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
             inline=False,
         )
         embed.set_thumbnail(url=member.avatar)
-        if member.guild.id == 755722576445046806:
-            if member.bot:
-                role = discord.utils.get(guild.roles, name="Bots")
-                await member.add_roles(role)
-                return
-            else:
-                role = discord.utils.get(guild.roles, name="Members")
-                await member.add_roles(role)
-                await info.send(f"{member.mention}", delete_after=0)
-                await info2.send(f"{member.mention}", delete_after=0)
-                await info3.send(f"{member.mention}", delete_after=0)
-                channel = self.bot.get_channel(755722577049026567)
-                await channel.send(
-                    content=f"Guild member count: {guild.member_count}",
-                    embed=embed,
-                    delete_after=10,
-                )
+        if member.guild.id == 755722576445046806 and member.bot:
+            role = discord.utils.get(guild.roles, name="Bots")
+            await member.add_roles(role)
+            return
 
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member, guild=None):
@@ -505,11 +457,11 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
                 delete_after=5,
             )
 
-    ######
+    ###
     #
     # Attempted AFK Feature : Head hurts might fix later
     #
-    ######
+    ###
     # @commands.Cog.listener(name="on_message")
     # async def afk_check(self, message):
     #     def afk_remove(afk):
@@ -532,18 +484,6 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
     #         if (message.reference and member == (await message.channel.fetch_message(message.reference.message_id)).author) or member.id in message.raw_mentions:
     #             await message.send(f"{member.name} is AFK: `{reason}`")
 
-    # @commands.command(name="afk")
-    # @commands.check(permissions.is_owner)
-    # async def afk(self, ctx, reason = "AFK"):
-    #     member = ctx.author
-    #     if member.id in afks.keys():
-    #         afks.pop(member.id)
-    #     else:
-    #         try:
-    #             member.edit(nick = f"[AFK] {member.display_name}")
-    #         except Exception:
-    #             pass
-
     #     afks[member.id] = reason
     #     embed = Embed(title = ":zzz: AFK", description = f"{member.display_name} is AFK", color = member.color)
     #     embed.set_thumbnail(url = member.avatar)
@@ -555,12 +495,7 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
     @commands.check(permissions.is_owner)
     async def api_gen(self, ctx, *, email: str):
         def check(e):
-            if re.search(self.email_re, email):
-                return True
-            elif "agb-dev.xyz" in email:
-                return True
-            else:
-                return False
+            return True if re.search(self.email_re, email) else "agb-dev.xyz" in email
 
         embed = Embed(title="API Token Gen", colour=discord.Colour.green())
 
@@ -595,7 +530,9 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
 
             await api_db.execute(f"SELECT * FROM users WHERE email = '{email}'")
             await api_db.execute(
-                f"UPDATE users SET apiverified = True, token = '{token}' WHERE email = '{email}'"
+                "UPDATE users SET apiverified = True, token = '$1' WHERE email = '$2'",
+                token,
+                email,
             )
             await api_db.close()
 
@@ -613,26 +550,11 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
             await ctx.send(embed=embed)
             return
 
-    # @owner.command()
-    # @commands.check(permissions.is_owner)
-    # async def servers(self, ctx):
-    #     filename = f"{ctx.guild.id}"
-    #     with open(f"{str(filename)}.txt", "a", encoding="utf-8") as f:
-    #         for guild in self.bot.guilds:
-    #             data = f"{guild.id}: {guild}"
-    #             f.write(data + "\n")
-    #             continue
-    #     try:
-    #         await ctx.send(
-    #             content="Sorry if this took a while to send, but here is all of the servers the bot is in!",
-    #             file=discord.File(f"{str(filename)}.txt"),
-    #         )
-    #     except Exception as e:
-    #         capture_exception(e)
-    #         await ctx.send(
-    #             "I couldn't send the file of this servers bans for whatever reason"
-    #         )
-    #     os.remove(f"{filename}.txt")
+    @owner.command()
+    async def testing(self, ctx):
+        """Error raiser"""
+        # Raise an exception if the server is not allowed to accessToken
+        raise discord.errors.NotOwner(ctx.author)
 
     @owner.command()
     @commands.check(permissions.is_owner)
@@ -648,7 +570,7 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
             * Pass these as is in your string
 
         Ex:
-            tp!addstatus Servers: {server_count} | Commands: {command_count}
+            /addstatus Servers: {server_count} | Commands: {command_count}
         """
 
         row_count = len(self.bot.db._statuses)
@@ -711,7 +633,7 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
                 await guild.chunk()
                 await asyncio.sleep(0.5)
 
-            ### Server Table Check ###
+            # Server Table Check
             serverRows = await self.bot.db.fetch_guild(guild.id)
             if not serverRows:
                 await self.bot.db.add_guild(guild.id)
@@ -723,7 +645,7 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
             if user.bot:
                 continue
 
-            ### User Table Check ###
+            # User Table Check
             userRows = await self.bot.db.fetch_user(user.id)
             if not userRows:
                 await self.bot.db.add_user(user.id)
@@ -731,7 +653,7 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
                     f"{formatColor(user, 'green')} ({formatColor(str(user.id), 'gray')}) added to the database [{formatColor('users', 'gray')}]"
                 )
 
-            ### Economy Table Check ###
+            # Economy Table Check ##
             economyRows = await self.bot.db.fetch_economy_user(user.id)
             if not economyRows:
                 await self.bot.db.add_economy_user(user.id)
@@ -739,7 +661,7 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
                     f"{formatColor(user, 'green')} ({formatColor(str(user.id), 'gray')}) added to the database [{formatColor('economy', 'gray')}]"
                 )
 
-            ### Blacklist Table Check ###
+            # Blacklist Table Check
             blacklistRows = await self.bot.db.fetch_blacklist(user.id)
             if not blacklistRows:
                 await self.bot.db.add_blacklist(user.id)
@@ -749,7 +671,8 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
 
         await message.edit(content="Done!")
 
-    async def get_commit(self, ctx):
+    @staticmethod
+    async def get_commit(ctx):
         COMMAND = "git branch -vv"
         proc = await asyncio.create_subprocess_shell(
             COMMAND, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
@@ -762,11 +685,20 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
                 return branch
         raise ValueError()
 
-    @commands.group()
+    @commands.hybrid_group()
+    @discord.app_commands.guilds(OS)
     @commands.check(permissions.is_owner)
     async def pull(self, ctx):
-        if ctx.invoked_subcommand is not None:
-            return
+        if ctx.invoked_subcommand is None:
+            return await ctx.send_help(str(ctx.command))
+        with contextlib.suppress(Exception):
+            await ctx.message.delete()
+        if ctx.invoked_subcommand is None:
+            await ctx.send_help(str(ctx.command))
+
+    @pull.command()
+    @commands.check(permissions.is_owner)
+    async def changes(self, ctx):
         COMMAND = "git pull"
         addendum = ""
         proc = await asyncio.create_subprocess_shell(
@@ -827,7 +759,7 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
         # check if the bot has ban members permission
         await ctx.typing(ephemeral=True)
         try:
-            if ctx.guild.me.guild_permissions.ban_members == True:
+            if ctx.guild.me.guild_permissions.ban_members is True:
                 # check the role hierarchy
                 if ctx.guild.me.top_role > member.top_role:
                     return await ctx.author.send("I can ban this user!")
@@ -923,12 +855,6 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
         embed.add_field(name="Upload", value=message_up)
         return embed
 
-    # @owner.command(name="sqlt")
-    # @commands.check(permissions.is_owner)
-    # async def sqlt(self, ctx, *, query: str):
-    #     data = await self.bot.db.execute(f"{query}RETURNING *")
-    #     await ctx.send(data)
-
     @blacklist.command(name="temp")
     @commands.check(permissions.is_owner)
     async def blacklist_add_temp(
@@ -969,7 +895,7 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
                     title="Blacklist DM",
                     description="The user has been notified of their blacklist.",
                 ).send(ctx)
-            except:
+            except discord.Forbidden:
                 await Embed(
                     title="Blacklist DM",
                     description="I was unable to DM the user, they have still been blacklisted.",
@@ -1020,7 +946,7 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
                 title="Blacklist DM",
                 description="The user has been notified of their blacklist.",
             ).send(ctx)
-        except:
+        except discord.Forbidden:
             await Embed(
                 title="Blacklist DM",
                 description="I was unable to DM the user, they have still been blacklisted.",
@@ -1064,30 +990,6 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
             "Please click the below button to evaluate your code.",
             view=EvalView(ctx.author.id),
         )
-
-        # async def filter_eval(search: str, to_filter: str):
-        #     if to_filter in search:
-        #         return search.replace(to_filter, "[REDACTED]")
-        #     else:
-        #         return search
-
-        # env = {
-        #     "self": self.bot,
-        #     "bot": self.bot,
-        #     "db": self.bot.db,
-        #     "ctx": ctx,
-        #     "channel": ctx.channel,
-        #     "author": ctx.author,
-        #     "guild": ctx.guild,
-        #     "message": ctx.message,
-        #     "_": self._last_result,
-        # }
-        # env.update(globals())
-        # body = self.cleanup_code(body)
-        # stdout = io.StringIO()
-        # to_compile = f'async def func():\n{textwrap.indent(body, "  ")}'
-
-        # embed = Embed(title="Evaluation", colour=colors.prim)
 
         # try:
         #     exec(to_compile, env)
@@ -1202,127 +1104,113 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
 
     @owner.command()
     @commands.check(permissions.is_owner)
-    async def load(self, ctx, *, names: str):
-        names = names.split(" ")
-        for name in names:
-            try:
-                await self.bot.load_extension(f"Cogs.{name}")
-            except Exception as e:
-                capture_exception(e)
-                await ctx.send(default.traceback_maker(e))
-                await self.add_fail_reaction()
-                return
-            await self.add_success_reaction()
-            await ctx.send(f"Loaded extension **{name}.py**", delete_after=delay)
+    async def sync(
+        self,
+        ctx,
+        guilds: commands.Greedy[discord.Object] = None,
+        spec: Optional[Literal["~", "*", "."]] = None,
+    ) -> None:
+        """Syncs commands
+        sync -> global sync
+        sync ~ or . -> sync current guild
+        sync * -> copies all global app commands to current guild and syncs
+        sync id_1 id_2 -> syncs guilds with id 1 and 2
+        """
+        if not guilds:
+            if spec in ["~", "."]:
+                synced = await ctx.bot.tree.sync(guild=ctx.guild)
+            elif spec == "*":
+                ctx.bot.tree.copy_global_to(guild=ctx.guild)
+                synced = await ctx.bot.tree.sync(guild=ctx.guild)
+            else:
+                synced = await ctx.bot.tree.sync()
 
-    @owner.command()
-    @commands.check(permissions.is_owner)
-    async def apidel(self, ctx):
-        channel = self.bot.get_channel(932548255202545664)
-        msg = await channel.fetch_message(932822132612808725)
-        await ctx.send(msg.content)
-
-    @owner.command()
-    @commands.check(permissions.is_owner)
-    async def sync(self, ctx):
-        arg = ctx.guild.id
-        await ctx.invoke(self.bot.get_command("jsk sync"), command_string=arg)
-
-    @owner.command()
-    @commands.check(permissions.is_owner)
-    async def unload(self, ctx, *, names: str):
-        names = names.split(" ")
-        for name in names:
-            try:
-                await self.bot.unload_extension(f"Cogs.{name}")
-            except Exception as e:
-                capture_exception(e)
-                return await ctx.send(default.traceback_maker(e))
             await ctx.send(
-                f"Unloaded extension **{name}.py** {ctx.author.mention}",
-                delete_after=delay,
+                f"Synced {len(synced)} commands {'globally' if spec is None else 'to the current guild.'}"
             )
+            return
 
-    @owner.command()
-    @commands.check(permissions.is_owner)
-    async def reload(self, ctx, *, names: str):
-        names = names.split(" ")
-        for name in names:
+        ret = 0
+        for guild in guilds:
             try:
-                await self.bot.reload_extension(f"Cogs.{name}")
-            except Exception as e:
-                capture_exception(e)
-                await ctx.send(default.traceback_maker(e))
-                return
-        if len(names) == 1:
-            await ctx.send(
-                f"Reloaded extension **{name}.py** {ctx.author.mention}",
-                delete_after=delay,
-            )
-        else:
-            await ctx.send(
-                f"Reloaded the following extensions\n"
-                + "\n".join(f"**{name}.py**" for name in names),
-                delete_after=delay,
+                await ctx.bot.tree.sync(guild=guild)
+            except discord.HTTPException:
+                pass
+            else:
+                ret += 1
+
+        await ctx.send(f"Synced the tree to {ret}/{len(guilds)}.")
+
+    @app_commands.command(name="cog", description="Reload, unload or load cogs!")
+    @app_commands.choices(
+        options=[
+            Choice(name="load", value="load"),
+            Choice(name="unload", value="unload"),
+            Choice(name="reload", value="reload"),
+            Choice(name="load all", value="loadall"),
+            Choice(name="reload all", value="reloadall"),
+        ]
+    )
+    @app_commands.guilds(OS)
+    @app_commands.check(permissions.is_owner_slash)
+    async def cog(
+        self,
+        interaction: discord.Interaction,
+        options: Choice[str],
+        extension: str = None,
+    ):
+        if options.value == "load":
+            try:
+                await self.bot.load_extension(extension)
+            except commands.errors.ExtensionAlreadyLoaded:
+                await interaction.followup.send(
+                    f"The cog `{extension}` is already loaded!"
+                )
+            await interaction.followup.send(
+                f"The extension `{extension}` has been loaded!"
             )
 
-    @owner.command()
-    @commands.check(permissions.is_owner)
-    async def loadall(self, ctx):
-        error_collection = []
-        for file in os.listdir("Cogs"):
-            if file.endswith(".py"):
-                name = file[:-3]
-                try:
-                    await self.bot.load_extension(f"Cogs.{name}")
-                except Exception as e:
-                    capture_exception(e)
-                    error_collection.append(
-                        [file, default.traceback_maker(e, advance=False)]
-                    )
-        if error_collection:
-            output = "\n".join(
-                [f"**{g[0]}** ```diff\n- {g[1]}```" for g in error_collection]
+        elif options.value == "unload":
+            try:
+                await self.bot.unload_extension(extension)
+            except commands.errors.ExtensionNotLoaded:
+                await interaction.followup.send(f"The cog `{extension}` wasn't loaded!")
+            await interaction.followup.send(
+                f"The extension `{extension}` has been unloaded!"
             )
-            await self.add_fail_reaction()
-            return await ctx.send(
-                f"Attempted to load all extensions, was able to but... "
-                f"the following failed...\n\n{output}"
-            )
-        await self.add_success_reaction()
-        await ctx.send(
-            f"Successfully loaded all extensions {ctx.author.mention}",
-            delete_after=delay,
-        )
 
-    @owner.command()
-    @commands.check(permissions.is_owner)
-    async def reloadall(self, ctx):
-        error_collection = []
-        for file in os.listdir("Cogs"):
-            if file.endswith(".py"):
-                name = file[:-3]
-                try:
-                    await self.bot.reload_extension(f"Cogs.{name}")
-                except Exception as e:
-                    capture_exception(e)
-                    error_collection.append(
-                        [file, default.traceback_maker(e, advance=False)]
-                    )
-        if error_collection:
-            output = "\n".join(
-                [f"**{g[0]}** ```diff\n- {g[1]}```" for g in error_collection]
+        elif options.value == "reload":
+            await self.bot.reload_extension(extension)
+            await interaction.followup.send(
+                f"The extension `{extension}` has been reloaded!"
             )
-            await self.add_fail_reaction()
-            return await ctx.send(
-                f"Attempted to reload all extensions, was able to reload, "
-                f"however the following failed...\n\n{output}"
-            )
-        await self.add_success_reaction()
-        await ctx.send(
-            f"Successfully reloaded all extensions {ctx.author.mention}",
-            delete_after=delay,
-        )
+
+        elif options.value == "loadall":
+            for file in sorted(pathlib.Path("Cogs").glob("**/[!_]*.py")):
+                cog = ".".join(file.parts).removesuffix(".py")
+                with suppress(commands.errors.ExtensionAlreadyLoaded):
+                    await self.bot.load_extension(cog)
+            await interaction.followup.send("All unloaded extensions have been loaded!")
+        elif options.value == "reloadall":
+            for file in sorted(pathlib.Path("Cogs").glob("**/[!_]*.py")):
+                cog = ".".join(file.parts).removesuffix(".py")
+                await self.bot.reload_extension(cog)
+            await interaction.followup.send("Reloaded all extensions!")
+
+    @cog.autocomplete("extension")
+    async def autocomplete_callback(
+        self, interaction: discord.Interaction, current: str
+    ):
+        extensions = []
+        for file in sorted(pathlib.Path("Cogs").glob("**/[!_]*.py")):
+            cog = ".".join(file.parts).removesuffix(".py")
+            extensions.append(cog)
+
+        return [
+            Choice(name=extension.split(".")[1], value=extension)
+            for extension in extensions
+            if current.lower() in extension.lower()
+        ][:25]
 
     @owner.command()
     @commands.check(permissions.is_owner)
@@ -1350,16 +1238,6 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
                 delete_after=delay,
             )
 
-    # @owner.command()
-    # @commands.check(permissions.is_mcstaff)
-    # async def afreboot(self, ctx):
-    #     with suppress(Exception):
-    #         bruh = await ctx.send("Rebooting AnimeForestMC...")
-    #         await asyncio.create_subprocess_shell(
-    #             "(cd /home/ubuntu/LunarGames/AnimeForestMC/ ; sh restart.sh)"
-    #         )
-    #     await bruh.edit(content="Server rebooted.")
-
     @owner.command()
     @commands.check(permissions.is_owner)
     async def apirm(self, ctx, *, rmcodes: str):
@@ -1371,7 +1249,7 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
         for rmcode in imgId:
             await self.remove_images(rmcode)
         if len(rmcodes) == 1:
-            await ctx.send(f"Removed `{rmcode}` from the API.", delete_after=delay)
+            await ctx.send(f"Removed `{rmcodes[0]}` from the API.", delete_after=delay)
             return
         await ctx.send(
             (
@@ -1387,15 +1265,35 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
         for attachment in ctx.message.attachments:
             attachment.save(attachment.filename)
 
+    async def restart_container_autocomplete(
+        self, _: discord.Interaction, current: str
+    ) -> list[Choice[str]]:
+        all_choices = [
+            Choice(name=name, value=_id) for name, _id in self.CONTAINERS.items()
+        ]
+        startswiths_choices = [
+            c
+            for c in all_choices
+            if c.name.startswith(current) or c.value.startswith(current)
+        ]
+        return (startswiths_choices or all_choices) if current else all_choices
+
     @owner.command()
     @commands.check(permissions.is_owner)
-    async def restart(self, ctx, *, container: str):
-        await ctx.send(f"Restarting container: {container}")
+    async def restart(self, ctx: commands.Context):
+        # AUTOCOMPLETE IDS:
+        # , container_id: Optional[str] = None):
+        # if not container_id:
+        #   container_id = self.CONTAINERS["AGB"]
+        # restart_what = discord.utils.find(lambda name, value: value == container_id, self.CONTAINERS.items())
+        # await ctx.send(f"Restarting {restart_what[0]}...")
+        # uncomment when used i guess
+        await ctx.send("Restarting AGB")
         async with aiohttp.ClientSession(
             headers={"Authorization": f"Bearer {self.config.lunarapi.tokenNew}"}
         ) as session:
             async with session.get(
-                f"https://api.lunardev.group/admin/restart?password={self.config.lunarapi.adminPass}&container={container}"
+                f"https://api.lunardev.group/admin/restart/agb?password={self.config.lunarapi.adminPass}"
             ) as resp:
                 if resp.status == 200:
                     return
@@ -1417,7 +1315,7 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
         e2 = Embed(
             title=f"New message to {user}",
             description=message,
-            footer=f"tp!owner dm {user.id}",
+            footer=f"/owner dm {user.id}",
         )
         # check if the command was ran in the log channel
         log_dm = self.bot.get_channel(986079167944749057)
@@ -1497,6 +1395,14 @@ class Admin(commands.Cog, name="admin", command_attrs=dict()):
                 "You need to either provide an image URL or upload one with the command",
                 delete_after=delay,
             )
+
+
+#         if interaction.user != self.user:
+#             await interaction.response.send_message("You can't use this button!", ephemeral=True)
+#             return False
+
+
+#         return True
 
 
 async def setup(bot: Bot) -> None:

@@ -49,6 +49,7 @@ class Guild(TypedDict):
     guildid: Any
     hentaichannel: Any
     prefix: Any
+    chatbotchannel: Any
 
 
 class AutoMod(TypedDict):

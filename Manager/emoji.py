@@ -1,4 +1,5 @@
 import random
+
 from utils import imports
 
 data = imports.get("emojis.json")
@@ -29,6 +30,7 @@ class Emoji:
     pencil: str = "✏️"
     rainbow_emojis: list = data.rainbow_emojis
 
+    @staticmethod
     async def rand_emoji():
         e = list[
             Emoji.ponbus,
@@ -57,5 +59,6 @@ class Emoji:
 
         return random.choice(e)
 
+    @staticmethod
     async def rand_rainbow():
         return random.choice(Emoji.rainbow_emojis)

@@ -9,10 +9,12 @@ import os
 import random
 import re
 from collections import Counter
-from typing import TYPE_CHECKING, Optional, Union
+from typing import Any, TYPE_CHECKING, Optional, Union, List
 
 import discord
 from discord.ext import commands
+from discord.app_commands import Transformer, Transform, Choice
+
 from index import Website, colors, config, delay
 from sentry_sdk import capture_exception
 from utils import checks, default, imports, permissions
@@ -36,6 +38,35 @@ class MemberNotFound(Exception):
 
 # edited from RoboDanny (i had a plan to use this but i just don't remember
 # for what)
+
+
+class ToggleCommandArgument(Transformer):
+    async def get_command(
+        self,
+        ctx_interaction: Union[discord.Interaction, commands.Context[Bot]],
+        name: str,
+    ) -> Optional[commands.Command[None, ..., Any]]:
+        bot: Bot = (
+            ctx_interaction.client
+            if isinstance(ctx_interaction, discord.Interaction)
+            else ctx_interaction.bot
+        )  # type: ignore
+        return bot.get_command(name)
+
+    # called when command is invoked via a prefix
+    convert = get_command
+    # called when invoked via slash
+    transform = get_command
+
+    async def autocomplete(
+        self, interaction: discord.Interaction, current: str, /
+    ) -> List[Choice[str]]:
+        bot: Bot = interaction.client  # type: ignore
+        all_choices = [
+            Choice(name=command.name, value=command.name) for command in bot.commands
+        ]
+        startswith_choices = [c for c in all_choices if c.name.startswith(current)]
+        return ((startswith_choices or all_choices) if current else all_choices)[:25]
 
 
 class Arguments(argparse.ArgumentParser):
@@ -189,22 +220,19 @@ class Moderator(commands.Cog, name="mod"):
         self.config = imports.get("config.json")
         blist = []
         self.blacklist = blist
-        self.prefixes = None
+        # self.prefixes = None
 
-    def cog_load(self) -> None:
-        self.bot.command_prefix = self.get_prefix  # type: ignore
+    # def cog_load(self) -> None:
 
-    async def get_prefix(self, _: Bot, message: discord.Message) -> str:
-        if not message.guild:
-            return self.bot.default_prefix
+    # async def get_prefix(self, _: Bot, message: discord.Message) -> str:
 
-        db_guild = self.bot.db.get_guild(
-            message.guild.id
-        ) or await self.bot.db.fetch_guild(message.guild.id)
-        if not db_guild or not db_guild.prefix:
-            return self.bot.default_prefix
+    #     db_guild = self.bot.db.get_guild(
+    #         message.guild.id
+    #     ) or await self.bot.db.fetch_guild(message.guild.id)
+    #     if not db_guild or not db_guild.prefix:
+    #         return self.bot.default_prefix
 
-        return db_guild.prefix or self.bot.default_prefix
+    #     return db_guild.prefix or self.bot.default_prefix
 
     async def create_embed(self, ctx, error):
         embed = Embed(title="Error Caught!", color=0xFF0000, description=f"{error}")
@@ -214,9 +242,14 @@ class Moderator(commands.Cog, name="mod"):
 
     @commands.Cog.listener()
     async def on_message(self, message):
+        db_user = self.bot.db.get_user(
+            message.author.id
+        ) or await self.bot.db.fetch_user(message.author.id)
         guild = self.bot.get_guild(975810661709922334)
         me = guild.get_role(975810988370710528)
         if message.guild is None:
+            if db_user and not db_user.message_tracking:
+                return
             if message.author == self.bot.user:
                 return
             if message.author.id in self.blacklist:
@@ -224,7 +257,7 @@ class Moderator(commands.Cog, name="mod"):
             # if message.author.id in self.config.owners:
             #     return
             if message.author.id != self.bot.user:
-                if message.content.startswith("tp!"):
+                if message.content.startswith("/"):
                     return
                 embed = Embed(colour=colors.prim)
                 embed.add_field(
@@ -232,7 +265,7 @@ class Moderator(commands.Cog, name="mod"):
                     value=f"{message.content}",
                 )
                 embed.set_footer(
-                    text=f"tp!owner dm {message.author.id} ",
+                    text=f"/owner dm {message.author.id} ",
                     icon_url=message.author.avatar,
                 )
                 channel = self.bot.get_channel(986079167944749057)
@@ -257,52 +290,61 @@ class Moderator(commands.Cog, name="mod"):
     @commands.guild_only()
     @permissions.dynamic_ownerbypass_cooldown(1, 5, commands.BucketType.user)
     @permissions.has_permissions(manage_guild=True)
-    async def toggle(self, ctx, *, command: str, ephemeral: bool = False):
+    async def toggle(
+        self,
+        ctx: commands.Context,
+        *,
+        command: Transform[Optional[commands.Command], ToggleCommandArgument],
+        ephemeral: bool = False,
+    ):
         """Toggle commands in your server to be enabled/disabled"""
-        # if not commandsEnabled[str(ctx.guild.id)][str(ctx.command.name)]:
-        #     await ctx.send(":x: This command has been disabled!")
-        #     return
-
-        # if cmdRow[0][0] == "true":
-        #     await ctx.send(":x: This command has been disabled!")
-        #     return
-        # mydb_n.commit() LEAVE THIS COMMENTED OUT
-
-        bot_command = self.bot.get_command(command)
-
-        if bot_command is None:
+        if command is None:
             await ctx.send("I can't find a command with that name!", ephemeral=True)
-        elif bot_command.name in (ctx.command.name, "help"):
+            return
+
+        assert ctx.command is not None, "ctx.command is None?!"
+        if not ctx.guild:
+            raise AssertionError("ctx.guild is None?!")
+
+        if command.name in (ctx.command.name, "help"):
             await ctx.send("You cannot disable this command.", ephemeral=True)
-        else:
-            db_command = self.bot.db.get_command(
-                bot_command.name
-            ) or await self.bot.db.fetch_command(bot_command.name)
-            if db_command is None:
-                await ctx.send(
-                    "Command can not be found or can not be toggled.", ephemeral=True
-                )
-                return
+            return
 
-            # True = command disabled; false = enabled
-            command_state: Optional[bool] = db_command.state_in(ctx.guild.id) or False
+        await ctx.typing()
+        try:
+            await command.can_run(ctx)
+        except Exception:
+            await ctx.send("You cannot disable this command.", ephemeral=True)
+            return
 
-            ternary = "enabled" if command_state else "disabled"
-            await db_command.modify(ctx.guild.id, not command_state)
+        db_command = self.bot.db.get_command(
+            command.name
+        ) or await self.bot.db.fetch_command(command.name)
+        if db_command is None:
+            await ctx.send(
+                "Command can not be found or can not be toggled.", ephemeral=True
+            )
+            return
 
-            embed = Embed(
-                title="Command Toggled",
-                colour=discord.Colour.green(),
-                timestamp=ctx.message.created_at,
-            )
-            embed.add_field(
-                name="Success", value=f"The `{command}` command has been **{ternary}**"
-            )
-            embed.set_thumbnail(url=ctx.message.author.avatar)
-            embed.set_author(
-                name=ctx.message.author.name, icon_url=ctx.message.author.avatar
-            )
-            await ctx.send(embed=embed)
+        # True = command disabled; false = enabled
+        command_state: Optional[bool] = db_command.state_in(ctx.guild.id) or False
+
+        ternary = "enabled" if command_state else "disabled"
+        await db_command.modify(ctx.guild.id, not command_state)
+
+        embed = Embed(
+            title="Command Toggled",
+            colour=discord.Colour.green(),
+            timestamp=ctx.message.created_at,
+        )
+        embed.add_field(
+            name="Success", value=f"The `{command}` command has been **{ternary}**"
+        )
+        embed.set_thumbnail(url=ctx.message.author.avatar)
+        embed.set_author(
+            name=ctx.message.author.name, icon_url=ctx.message.author.avatar
+        )
+        await ctx.send(embed=embed)
 
     @permissions.dynamic_ownerbypass_cooldown(1, 5, commands.BucketType.user)
     @commands.guild_only()
@@ -318,89 +360,21 @@ class Moderator(commands.Cog, name="mod"):
         await member.kick(reason=default.responsible(ctx.author, reason))
         await ctx.send(embed=Embed(description=default.actionmessage("kicked")))
 
-    @commands.hybrid_command()
-    @commands.guild_only()
-    @permissions.dynamic_ownerbypass_cooldown(1, 5, commands.BucketType.user)
-    @permissions.has_permissions(manage_channels=True)
-    async def setprefix(self, ctx, new: str = None):
-        """Set a custom prefix for the server"""
+    # @commands.hybrid_command()
 
-        no_prefix = Embed(title="Please put a prefix you want.", colour=colors.prim)
-        if not new:
-            return await ctx.send(embed=no_prefix)
-        if len(new) > 5:
-            await ctx.send("I don't accept prefixes over 5 characters.")
-            return
-        else:
-            # self.prefixes[str(ctx.guild.id)] = new
-            # with open('prefixes.json', 'w') as f:
-            #     json.dump(self.prefixes, f, indent=4)
-            new_prefix = Embed(
-                description=f"The new prefix is `{new}`",
-                color=colors.prim,
-                timestamp=ctx.message.created_at,
-            )
-            await ctx.send(embed=new_prefix)
-            try:
-                await ctx.guild.me.edit(nick=f"[{new}] {self.bot.user.name}")
-                db_guild = self.bot.db.get_guild(
-                    ctx.guild.id
-                ) or await self.bot.db.fetch_guild(ctx.guild.id)
-                if not db_guild:
-                    db_guild = await self.bot.db.add_guild(ctx.guild.id)
+    #     no_prefix = Embed(title="Please put a prefix you want.", colour=colors.prim)
 
-                await db_guild.modify(prefix=new)
-            except discord.errors.Forbidden:
-                await ctx.send(
-                    "I couldn't update my nickname, the prefix has changed though."
-                )
-
-    # @commands.hybrid_command(usage="`tp!slashremove yes/no`")
-    # @permissions.has_permissions(manage_guild=True)
-    # @commands.bot_has_permissions(use_slash_commands=True, manage_guild=True)
-    # async def slashremove(self, ctx, confirm=False):
-    #     """Removes all slash commands registered by AGB"""
-    #     if not confirm:
-    #         await ctx.send(
-    #             "Are you sure you want to unregister the example slash commands in this guild? "
-    #             f"Run `{ctx.prefix}slashremove yes` to confirm."
-    #         )
-    #         return
-    #     wait = await ctx.send("Setting up...")
-    #     async with ctx.channel.typing():
-    #         raw = await self.bot.http.get_guild_commands(self.bot.user.id, ctx.guild.id)
-    #         for x in raw:
-    #             await self.bot.http.delete_guild_command(
-    #                 self.bot.user.id, ctx.guild.id, x["id"]
+    #             await db_guild.modify(prefix=new)
+    #         except discord.errors.Forbidden:
+    #             await ctx.send(
+    #                 "I couldn't update my nickname, the prefix has changed though."
     #             )
-    #         await wait.edit(content="Done!")
 
-    # @commands.hybrid_command(usage="`tp!slashsetup yes/no`")
-    # @permissions.has_permissions(manage_guild=True)
-    # @commands.bot_has_permissions(use_slash_commands=True, manage_guild=True)
-    # async def slashsetup(self, ctx, confirm=False):
-    #     """Sets up NSFW slash commands for your server."""
-    #     if not confirm:
-    #         await ctx.send(
-    #             "Are you sure you want to register the example slash commands in this guild? "
-    #             "Do not do this if they are already registered.\n"
-    #             f"Run `{ctx.prefix}slashsetup yes` to confirm."
-    #         )
-    #         return
-    #     wait = await ctx.send("Setting up...")
-    #     async with ctx.channel.typing():
-    #         try:
-    #             payload1 = {
-    #                 "name": "boobs",
-    #                 "type": 1,
-    #                 "description": "Boobs"}
-    #             await self.bot.http.upsert_global_command(
-    #                 self.bot.user.id, payload1)
+    # @commands.hybrid_command(usage="`/slashremove yes/no`")
+
+    # @commands.hybrid_command(usage="`/slashsetup yes/no`")
 
     #             payload2 = {
-    #                 "name": "thighs",
-    #                 "type": 1,
-    #                 "description": "Thighs"}
 
     #             await self.bot.http.upsert_global_command(
     #                 self.bot.user.id, payload2)
@@ -510,35 +484,6 @@ class Moderator(commands.Cog, name="mod"):
     #     )
 
     # @slashsetup.error
-    # async def slashsetup_error(self, ctx, error):
-    #     if isinstance(error, commands.MissingPermissions):
-    #         embed = Embed(
-    #             title="Error Caught!",
-    #             color=0xFF0000,
-    #             description=f"Please join the support server for help **[here]({config.Server})**.",
-    #         )
-    #         embed.set_thumbnail(url=self.bot.user.avatar)
-    #         await ctx.send(content="This command will be converted to slash commands before April 30th.", embed=embed)
-    #         return
-    #     elif isinstance(error, commands.CommandInvokeError):
-    #         embed = Embed(
-    #             title="Error Caught!",
-    #             color=0xFF0000,
-    #             description=f"This command is complex in terms of setting up, please join the support server for **[help]({config.Server})**.",
-    #         )
-    #         embed.set_thumbnail(url=self.bot.user.avatar)
-    #         await ctx.send(content="This command will be converted to slash commands before April 30th.", embed=embed)
-    #         return
-    #     elif isinstance(error, commands.MissingRequiredArgument):
-    #         self.create_embed(ctx, error)
-    #         return
-    #     elif isinstance(error, commands.BotMissingPermissions):
-    #         await self.create_embed(ctx, error)
-    #         return
-    #     elif isinstance(error, discord.errors.Forbidden):
-    #         await self.create_embed(ctx, error)
-    #         return
-    # nice
 
     @permissions.dynamic_ownerbypass_cooldown(1, 5, commands.BucketType.user)
     @commands.hybrid_command()
@@ -597,15 +542,15 @@ class Moderator(commands.Cog, name="mod"):
     async def perms(self, ctx):
         """Tells you what permissions the bot has."""
 
-        perms = "\n".join(
+        perms = ", ".join(
             [
-                f"- {p}".replace("_", " ")
+                f"{p}".replace("_", " ")
                 for p, value in ctx.guild.me.guild_permissions
                 if value is True
             ]
         )
         if "administrator" in perms:
-            perms = "Administrator ( All permissions )"
+            perms = "Administrator (All permissions)"
 
         embed = Embed(
             title=f"{self.bot.user.name} has the following permissions:",
@@ -614,7 +559,6 @@ class Moderator(commands.Cog, name="mod"):
             color=ctx.author.color,
             timestamp=ctx.message.created_at,
         )
-        embed.set_footer(text="lunardev.group", icon_url=ctx.author.avatar)
         await ctx.send(embed=embed)
 
     @permissions.dynamic_ownerbypass_cooldown(1, 500, commands.BucketType.guild)
@@ -631,7 +575,7 @@ class Moderator(commands.Cog, name="mod"):
         with open("colors.json", "r") as f:
             data = json.load(f)
             message = await ctx.send(
-                "***READ THIS BEFORE YOU DO ANYTHING!!!***\nTo STOP making roles send `cancel`! If you say anything before this prompt changes the process will also stop. If you for some reason want to remove the color roles after I get done, please run `tp!rainbowremove`."
+                "***READ THIS BEFORE YOU DO ANYTHING!!!***\nTo STOP making roles send `cancel`! If you say anything before this prompt changes the process will also stop. If you for some reason want to remove the color roles after I get done, please run `/removerainbow`."
             )
         try:
             msg = await self.bot.wait_for("message", check=check, timeout=20)
@@ -649,12 +593,14 @@ class Moderator(commands.Cog, name="mod"):
                     )
             for color, hexcode in data.items():
                 await ctx.guild.create_role(
-                    name=color, colour=discord.Colour(int(hexcode, 0))
+                    name=color,
+                    colour=discord.Colour(int(hexcode, 0)),
+                    permissions=discord.Permissions.none(),
                 )
                 await message.edit(content=f"Created {color}.")
                 await asyncio.sleep(0.5)
             await message.edit(
-                content=f"Alright, I've made all the colors, have fun.\nTo give yourself a color role, run `{ctx.prefix}help colorme` and follow its instructions."
+                content=f"Alright, I've made all the colors, have fun.\nTo give yourself a color role, run `/colorme` and follow its instructions."
             )
 
     @permissions.dynamic_ownerbypass_cooldown(1, 500, commands.BucketType.guild)
@@ -685,13 +631,43 @@ class Moderator(commands.Cog, name="mod"):
                 await asyncio.sleep(3)
                 await m.edit(content="Alright, deleting roles...")
                 await asyncio.sleep(0.5)
-                for color, hexcode in data.items():
-                    reason = f"Action done by {ctx.author} (ID: {ctx.author.id})"
-                    role = discord.utils.get(ctx.guild.roles, name=color)
-                    await role.delete(reason=reason)
-                    await m.edit(content=f"Deleted {color}.")
-                    await asyncio.sleep(1.1)
-                await m.edit(content="Alright, all rainbow roles have been deleted.")
+                try:
+                    for color, hexcode in data.items():
+                        role: Optional[discord.Role] = discord.utils.get(
+                            ctx.guild.roles, name=color
+                        )  # type: ignore
+                        if not role:
+                            # just to be sure
+                            continue
+
+                        if role.permissions != discord.Permissions.none():
+                            return await m.edit(
+                                content=(
+                                    "The roles I was about to delete have permissions that are not typically given when color roles are made. "
+                                    "Please verify that these roles are color roles that *I* have made and remove the permissions from them."
+                                )
+                            )
+                        reason = f"Action done by {ctx.author} (ID: {ctx.author.id})"
+                        await role.delete(reason=reason)
+                        await m.edit(content=f"Deleted {color}.")
+                        await asyncio.sleep(1.1)
+
+                    await m.edit(
+                        content="Alright, all rainbow roles have been deleted."
+                    )
+                except Exception as e:
+                    return await m.edit(
+                        content=f"I was unable to delete color roles, did you add them?\nDirect Error: {e}"
+                    )
+
+    @permissions.dynamic_ownerbypass_cooldown(1, 5, commands.BucketType.user)
+    @commands.hybrid_command()
+    @commands.guild_only()
+    @permissions.has_permissions(administrator=True)
+    async def fuckoff(self, ctx):
+        """Makes the bot fuck off. (leave the server)"""
+        await ctx.send("Aight <a:LD_PeaceOut:1017017390086770748>")
+        await ctx.guild.leave()
 
     @permissions.dynamic_ownerbypass_cooldown(1, 5, commands.BucketType.user)
     @commands.hybrid_command()
@@ -723,33 +699,45 @@ class Moderator(commands.Cog, name="mod"):
     @commands.bot_has_permissions(embed_links=True, manage_channels=True)
     @commands.guild_only()
     @commands.hybrid_command()
-    async def toggleslow(self, ctx, time: int = 0):
-        """
-        Slow the chat."""
+    async def toggleslow(self, ctx, time: str, reason=None):
+        """Slow the chat."""
 
-        with contextlib.suppress(Exception):
-            await ctx.message.delete()
+        # with contextlib.suppress(Exception):
+        #     await ctx.message.delete()
+        valid_time_units = ("s", "m", "h")
+        if not time.endswith(valid_time_units):
+            await ctx.send("Invalid time unit! Please use s, m, or h.", ephemeral=True)
+            return
+        if reason is None:
+            reason = f"Action done by {ctx.author} (ID: {ctx.author.id})"
+        if time.endswith("s"):
+            time = int(time[:-1])
+        elif time.endswith("m"):
+            time = int(time[:-1]) * 60
+        elif time.endswith("h"):
+            time = int(time[:-1]) * 3600
+        else:
+            time = int(time)
         if time < 0 or time > 21600:
-            await ctx.send(
-                "Invalid time specified! Time must be between 0 and 21600 (inclusive)"
-            )
+            await Embed(
+                description="Invalid time specified! Time must be between 0 and 21600 (inclusive)",
+                thumbnail=None,
+            ).send(ctx, ephemeral=True)
             return
         try:
-            await ctx.channel.edit(slowmode_delay=time)
+            await ctx.channel.edit(slowmode_delay=datetime.timedelta(seconds=time))
         except discord.errors.Forbidden:
             await ctx.send("I don't have manage channel permissions.")
             return
         if time > 0:
             await ctx.send(
                 (
-                    "{0.mention} is now in slow mode. You may send 1 message "
-                    "every {1} seconds".format(ctx.channel, time)
+                    f"{ctx.channel.mention} is now in slow mode. You may send 1 message "
+                    f"every {time} seconds"
                 )
             )
         else:
-            await ctx.send(
-                ("Slow mode has been disabled for {0.mention}".format(ctx.channel))
-            )
+            await ctx.send((f"Slow mode has been disabled for {ctx.channel.mention}"))
 
     @commands.hybrid_command()
     @permissions.dynamic_ownerbypass_cooldown(
@@ -914,11 +902,39 @@ class Moderator(commands.Cog, name="mod"):
             await ban_msg.edit(content=f"Error{e}")
             return
         await ban_msg.edit(
+            content=None,
             embed=Embed(
-                content=None,
                 color=colors.prim,
                 description=f"<a:LD_Banned1:872972866092662794><a:LD_Banned2:872972848354983947><a:LD_Banned3:872972787877314601> **{member}** has been banned: reason {reason}",
+            ),
+        )
+
+    @commands.hybrid_command()
+    @commands.guild_only()
+    @permissions.dynamic_ownerbypass_cooldown(1, 5, commands.BucketType.user)
+    @commands.bot_has_permissions(embed_links=True)
+    async def fban(self, ctx, member: discord.Member, *, reason: ActionReason = None):
+        """
+        *totally* Bans a member from the server.
+        """
+
+        with contextlib.suppress(Exception):
+            await ctx.message.delete()
+        if reason is None:
+            reason = f"Action done by {ctx.author} (ID: {ctx.author.id})"
+        ban_msg = await ctx.send(
+            f"<:LD_banHammer:875376602651959357> {ctx.author.mention} banned {member}"
+        )
+        with contextlib.suppress(Exception):
+            await member.send(
+                f"You were *totally* banned in **{ctx.guild.name}**(not really)\n**{reason}**."
             )
+        await ban_msg.edit(
+            content=None,
+            embed=Embed(
+                color=colors.prim,
+                description=f"<a:LD_Banned1:872972866092662794><a:LD_Banned2:872972848354983947><a:LD_Banned3:872972787877314601> **{member}** has been banned: reason {reason}",
+            ),
         )
 
     @commands.hybrid_command()
@@ -978,7 +994,7 @@ class Moderator(commands.Cog, name="mod"):
                     "Please either put a user mention or multiple user ID's to ban!"
                 )
             await ctx.send(
-                "this command can only be used on multiple people\neg: `tp!ban userID\nuserID2\nuserID3`"
+                "this command can only be used on multiple people\neg: `/ban userID\nuserID2\nuserID3`"
             )
             return
         m = await ctx.send("Working...")
@@ -1058,7 +1074,7 @@ class Moderator(commands.Cog, name="mod"):
         await ctx.guild.unban(member, reason=reason)
         await ctx.send(f"Alright, softbanned em, reason: {reason}")
 
-    @commands.command(aliases=["se", "steal", "stealemote"])
+    @commands.hybrid_command()
     @commands.guild_only()
     @permissions.dynamic_ownerbypass_cooldown(1, 5, commands.BucketType.user)
     @permissions.has_permissions(manage_emojis=True, manage_guild=True)
@@ -1382,7 +1398,7 @@ class Moderator(commands.Cog, name="mod"):
     ):
         # sourcery skip: avoid-builtin-shadow
         """Creates a role with any name, permissions, hoistable, mentionable, and color
-        Example: `tp!role create bruh 8 True True ff0000`
+        Example: `/role create bruh 8 True True ff0000`
         Look at a permission calculator for more info on permissions: https://finitereality.github.io/permissions-calculator/
         Args:
             name (str): the name of the role
@@ -1465,7 +1481,7 @@ class Moderator(commands.Cog, name="mod"):
     ):
         # sourcery skip: avoid-builtin-shadow
         """Edit any role to add new permissions, make it hoisted, mentionable, and a new color
-        Example: `tp!role edit role_name new_name permission_value hoist:True/False mentionable:True/False hex:number`
+        Example: `/role edit role_name new_name permission_value hoist:True/False mentionable:True/False hex:number`
         **Hint** True and False are case sensitive.
         Args:
             role (str): the role to edit
@@ -1647,11 +1663,12 @@ class Moderator(commands.Cog, name="mod"):
         ctx,
         member: discord.Member,
         time: str,
-        reason: str,
+        reason: Optional[str] = None,
         ephemeral: bool = False,
     ):
         """Mute someone for a certain amount of time, from 10 seconds to 28 days."""
-
+        if reason is None:
+            reason = f"Action done by {ctx.author} (ID: {ctx.author.id})"
         # make a tuple of valid time unit strings
         valid_time_units = ("s", "m", "h", "d", "w")
         if not time.endswith(valid_time_units):
@@ -1676,7 +1693,6 @@ class Moderator(commands.Cog, name="mod"):
         if time > 2419200:
             await Embed(
                 description="You can't mute someone for more than 28 days! Please use a shorter time.",
-                footer="mc.lunardev.group 1.19.2",
             ).send(ctx, ephemeral=True)
             return
         if await permissions.check_priv(ctx, member=member):
@@ -1689,29 +1705,24 @@ class Moderator(commands.Cog, name="mod"):
             await Embed(
                 title="Error",
                 description="I need the `moderate_members` permission to do this.",
-                footer="mc.lunardev.group 1.19.2",
             ).send(ctx, ephemeral=True)
             return
 
         if time > 86400:
             await Embed(
                 description=f"{member.mention} has been muted for {time // 86400} days.",
-                footer="mc.lunardev.group 1.19.2",
             ).send(ctx, ephemeral=ephemeral)
         elif time > 3600:
             await Embed(
                 description=f"{member.mention} has been muted for {time // 3600} hours.",
-                footer="mc.lunardev.group 1.19.2",
             ).send(ctx, ephemeral=ephemeral)
         elif time > 60:
             await Embed(
                 description=f"{member.mention} has been muted for {time // 60} minutes.",
-                footer="mc.lunardev.group 1.19.2",
             ).send(ctx, ephemeral=ephemeral)
         else:
             await Embed(
                 description=f"{member.mention} has been muted for {time} seconds.",
-                footer="mc.lunardev.group 1.19.2",
             ).send(ctx, ephemeral=ephemeral)
 
     @commands.hybrid_command()
@@ -1738,47 +1749,13 @@ class Moderator(commands.Cog, name="mod"):
     # Forked from and edited
     # https://github.com/Rapptz/RoboDanny/blob/715a5cf8545b94d61823f62db484be4fac1c95b1/cogs/mod.py#L1163
 
-    # @commands.hybrid_command(usage="`tp!ss`", aliases=["ss"])
-    # @permissions.dynamic_ownerbypass_cooldown(1, 5, commands.BucketType.user)
-    # @commands.guild_only()
-    # @permissions.has_permissions(manage_roles=True)
-    # @commands.bot_has_permissions(embed_links=True, manage_roles=True)
-    # async def server_setup(self, ctx):
-    #     """Sets up the server for you, makes basic roles, channels, and syncs permissions."""
-    #     #a list of the new roles with their permissions
-    #     new_roles = [
-    #         "Muted",
-    #         "Member",
-    #         "Moderator",
-    #         "Admin",
-    #         "Owner",
-    #     ]
-    #     #a list of the channels to create
-    #     general_channels = [
-    #         "general",
-    #         "bots",
-    #         "memes",
-    #         "media",
-    #         "spam",
-    #         "nsfw"
-    #     ]
-    #     #staff channels
-    #     staff_channels = [
-    #         "staff-announcements",
-    #         "staff-chat",
-    #         "staff-logs",
-    #         "staff-testing"
-    #         ]
+    # @commands.hybrid_command(usage="`/ss`", aliases=["ss"])
 
     #     #logging
     #     logging_channels = [
-    #         "message-logs",
-    #         "mod-logs",
-    #     ]
 
     #     #wait for the author to make sure they want to do this
     #     def check(m):
-    #         return m.author == ctx.author and m.channel == ctx.channel
 
     #     try:
     #         start = await ctx.send(
@@ -1862,19 +1839,19 @@ class Moderator(commands.Cog, name="mod"):
     #         "Please check the channels and roles to make sure everything is set up correctly."
     #     )
 
-    @commands.group(invoke_without_command=True)
+    @commands.hybrid_group()
     @commands.guild_only()
     @checks.has_permissions(manage_messages=True)
     @commands.bot_has_permissions(embed_links=True, manage_roles=True)
     @permissions.dynamic_ownerbypass_cooldown(1, 8, commands.BucketType.user)
-    async def purge(self, ctx, num: Union[int, str] = None):
+    async def purge(self, ctx, num: Optional[Union[int, str]] = None):
         """Removes messages that meet a criteria.
         In order to use this command, you must have Manage Messages permissions.
         Note that the bot needs Manage Messages as well. These commands cannot
         be used in a private message.
         When the command is done doing its work, you will get a message
         detailing which users got removed and how many messages got removed.
-        `tp!purge all` removes 30 messages.
+        `/purge all` removes 30 messages.
         """
         if ctx.invoked_subcommand is None:
             # assume we're purging all messages and invoke purge all
@@ -1886,6 +1863,7 @@ class Moderator(commands.Cog, name="mod"):
             await ctx.invoke(self.bot.get_command("purge all"), num)
 
     async def do_removal(self, ctx, limit, predicate, *, before=None, after=None):
+        await ctx.typing()
         if limit > 2000:
             return await ctx.send(f"Too many messages to search given ({limit}/2000)")
 
@@ -1995,12 +1973,12 @@ class Moderator(commands.Cog, name="mod"):
             await ctx.message.delete()
         await self.do_removal(ctx, 100, lambda e: substr in e.content)
 
-    @purge.command(name="bot", aliases=["bots"])
+    @purge.command()
     @commands.guild_only()
     @permissions.dynamic_ownerbypass_cooldown(1, 5, commands.BucketType.user)
-    async def _bot(self, ctx, prefix=None, search=300):
+    async def bots(self, ctx, prefix=None, search=300):
         """Removes a bot user's messages and messages with their optional prefix.
-        Example: `tp!purge bots <the bots prefix[this is optional]> <amount[this is also optional]>`"""
+        Example: `/purge bots <the bots prefix[this is optional]> <amount[this is also optional]>`"""
         with contextlib.suppress(Exception):
             await ctx.message.delete()
 
@@ -2061,14 +2039,6 @@ class Moderator(commands.Cog, name="mod"):
             and len(e.attachments)
             and len(e.role_mentions),
         )
-        getprefix = prefix or self.config.prefix
-
-        def predicate(m):
-            return (m.webhook_id is None and m.author.bot) or m.content.startswith(
-                tuple(getprefix)
-            )
-
-        await self.do_removal(ctx, search, predicate)
 
 
 async def setup(bot: Bot) -> None:

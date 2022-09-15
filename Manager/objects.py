@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from ._types import GlobalVars as GlobalVarsData
     from ._types import Guild as GuildData
     from ._types import GuildBlacklist as GuildBlacklistData
-    from ._types import Reminders as RemindersData
+
     from ._types import Status as StatusData
     from ._types import User as UserData
     from ._types import UserEconomy as UserEconomyData
@@ -37,7 +37,7 @@ __all__: tuple[str, ...] = (
     "Guild",
     "GuildBlacklist",
     "GlobalVar",
-    "Reminder",
+    # "Reminder",
     "Status",
     "User",
     "UserEconomy",
@@ -50,17 +50,13 @@ def _handle_varchar(value: Any) -> Any:
 
     if isinstance(value, (int, float, bool)):
         return value
-    elif isinstance(value, str):
+    if isinstance(value, str):
         if value.lower() == "true":
             return True
-        elif value.lower() == "false":
+        if value.lower() == "false":
             return False
-        elif value.isdigit():
-            return int(value)
-        else:
-            return value
-    else:
-        return value
+        return int(value) if value.isdigit() else value
+    return value
 
 
 def _handle_null_or_int(value: Any) -> Optional[int]:
@@ -77,7 +73,6 @@ class Table(Enum):
     GLOBALVARS = "globalvars"
     GUILDBLACKLIST = "guildblacklist"
     GUILDS = "guilds"
-    REMINDERS = "reminders"
     STATUS = "status"
     USER_ECONOMY = "usereco"
     USERS = "users"
@@ -122,12 +117,14 @@ class Base:
         # type: ignore
         return int(
             getattr(
-                self, next((key for key in possible_int_keys if key in self.data), 0)
+                self, next(
+                    (key for key in possible_int_keys if key in self.data), 0)
             )
         )
 
     def __repr__(self) -> str:
-        values = ", ".join(f"{key}={value!r}" for key, value in self.data.items())
+        values = ", ".join(f"{key}={value!r}" for key,
+                           value in self.data.items())
         return f"{self.__class__.__name__}({values})"
 
     def _handle_query_inputs(
@@ -154,7 +151,8 @@ class Base:
         return where, inputs, values
 
     async def handle_execute(self, *, where: dict[str, Any], **kwargs) -> Any:
-        _where, _inputs, _values = self._handle_query_inputs(where=where, **kwargs)
+        _where, _inputs, _values = self._handle_query_inputs(
+            where=where, **kwargs)
         where = where or _where
         query = f"UPDATE {self.table} SET {', '.join(f'{key} = {value}' for key, value in _inputs.items())}"
         if _where:
@@ -198,7 +196,8 @@ class UserEconomy(Base):
         if last_daily is not None:
             kwargs["lastdaily"] = last_daily
         if is_bot is not MISSING:
-            kwargs["isbot"] = str(is_bot).lower() if is_bot is not None else None
+            kwargs["isbot"] = str(is_bot).lower(
+            ) if is_bot is not None else None
         return await Base.handle_execute(
             self, where={"userid": str(self.user_id)}, **kwargs
         )
@@ -259,18 +258,17 @@ class Command(Base):
 
         self.states: dict[int, Optional[str]] = {}
         self.data = {self.name: self.states, "placeholder": self.name}
-        # key = guild_id, value = state ("true", "false" or None)
 
-    def _handle_state_bool(self, value: Optional[str]) -> Optional[bool]:
+    @staticmethod
+    def _handle_state_bool(value: Optional[str]) -> Optional[bool]:
         return None if value is None else value == "true"
 
     async def fill_guild_ids(self) -> None:
-        query = f"SELECT guild, {self.name} FROM {self.table}"
+        query = f"SELECT guild, commands.{self.name} FROM {self.table}"
         data = await self.database.fetch(query)
         for entry in data:
             guild_id = entry["guild"]
-            if self.name in entry:
-                self.states[int(guild_id)] = entry[self.name]
+            self.states[int(guild_id)] = entry.get(self.name)
 
     def state_in(self, guild_id: int) -> Optional[bool]:
         guild_command = self.states.get(guild_id)
@@ -283,7 +281,8 @@ class Command(Base):
     ) -> Self:
         query = f"UPDATE {self.table} SET {self.name} = $1 WHERE guild = $2 RETURNING *"
 
-        values = [str(state).lower() if state is not None else None, str(guild_id)]
+        values = [str(state).lower()
+                  if state is not None else None, str(guild_id)]
         data = await self.database.fetchrow(query, *values)
         self.states[guild_id] = data[self.name]  # type: ignore
         inst = self.__class__(self.database, name=self.name)  # type: ignore
@@ -294,23 +293,25 @@ class Command(Base):
 
 class Guild(Base):
     table = Table.GUILDS
-    columns: tuple[str, ...] = ("hentaichannel", "prefix")
+    columns: tuple[str, ...] = ("hentaichannel", "prefix", "chatbotchannel")
 
     def __init__(self, database: Database, /, data: GuildData) -> None:
         self.data: GuildData = data
         self.database: Database = database
 
         self.id: int = _handle_varchar(data["guildid"])
-        self.hentai_channel_id: Optional[int] = _handle_null_or_int(
-            data["hentaichannel"]
-        )
+        self.hentai_channel_id: Optional[int] = _handle_varchar(
+            data["hentaichannel"])
         self.prefix: Optional[str] = data["prefix"]
+        self.chatbot_channel_id: Optional[int] = _handle_varchar(
+            data["chatbotchannel"])
 
     async def modify(
         self,
         *,
         hentai_channel_id: Optional[int] = MISSING,
         prefix: Optional[Any] = MISSING,
+        chatbot_channel_id: Optional[int] = MISSING,
     ) -> Guild:
         kwargs = {}
         if hentai_channel_id is not MISSING:
@@ -320,6 +321,10 @@ class Guild(Base):
         if prefix is not MISSING:
             kwargs["prefix"] = str(prefix) if prefix is not None else None
 
+        if chatbot_channel_id is not MISSING:
+            kwargs["chatbotchannel"] = (
+                str(chatbot_channel_id) if chatbot_channel_id is not None else None
+            )
         return await Base.handle_execute(
             self, where={"guildid": str(self.id)}, **kwargs
         )
@@ -371,7 +376,8 @@ class AutoPosting(Base):
     ) -> AutoPosting:
         kwargs = {}
         if hentai_id is not MISSING:
-            kwargs["hentai_id"] = str(hentai_id) if hentai_id is not None else None
+            kwargs["hentai_id"] = str(
+                hentai_id) if hentai_id is not None else None
 
         return await Base.handle_execute(
             self, where={"guild_id": str(self.guild_id)}, **kwargs
@@ -401,13 +407,12 @@ class AutoRole(Base):
 
 class Badge(Base):
     table = Table.BADGES
-    columns: tuple[str, ...] = tuple()
+    columns: tuple[str, ...] = ()
 
     def __init__(self, database: Database, /, *, name: str) -> None:
         self.database: Database = database
 
         self.name: str = name
-        # key = user_id, value = bool
         self.users: dict[int, bool] = {}
 
     async def fill_users_ids(self) -> None:
@@ -437,7 +442,8 @@ class Badge(Base):
 
 class Blacklist(Base):
     table = Table.BLACKLIST
-    columns: tuple[str, ...] = ("userid", "blacklisted", "blacklistedtill", "reason")
+    columns: tuple[str, ...] = (
+        "userid", "blacklisted", "blacklistedtill", "reason")
 
     def __init__(self, database: Database, /, data: BlacklistData) -> None:
         self.data: BlacklistData = data
@@ -445,14 +451,15 @@ class Blacklist(Base):
 
         self.user_id: int = _handle_varchar(data["userid"])
         self.is_blacklisted: bool = _handle_varchar(data["blacklisted"])
-        self.blacklistedtill: Optional[str] = _handle_varchar(data["blacklistedtill"])
+        self.blacklistedtill: Optional[str] = _handle_varchar(
+            data["blacklistedtill"])
         self.reason: Optional[str] = _handle_varchar(data["reason"])
 
     async def modify(
         self,
         *,
         blacklisted: Optional[bool] = MISSING,
-        blacklistedtill: Optional[str] = MISSING,
+        blacklistedtill: Optional[int] = MISSING,
         reason: Optional[str] = MISSING,
     ) -> Blacklist:
         kwargs = {}
@@ -508,30 +515,9 @@ class GuildBlacklist(Base):
         return await Base.handle_execute(self, where=where, **kwargs)
 
 
-class Reminder(Base):
-    table = Table.REMINDERS
-    columns: tuple[str, ...] = ("user", "length", "reminder")
-
-    def __init__(self, database: Database, /, data: RemindersData) -> None:
-        self.data: RemindersData = data
-        self.database: Database = database
-
-        self.user_id: int = _handle_varchar(data["user"])
-        self.length: str = _handle_varchar(data["length"])
-        self.reminder: Optional[str] = _handle_varchar(data["reminder"])
-
-    async def modify(
-        self,
-        *,
-        reminder: Optional[str] = MISSING,
-        length: Optional[str] = MISSING,
-    ) -> Reminder:
-        kwargs = {}
-        if reminder is not MISSING:
-            kwargs["reminder"] = str(reminder) if reminder is not None else None
-        if length is not MISSING:
-            kwargs["length"] = str(length) if length is not None else None
-        return await Base.handle_execute(self, where={"user": self.user_id}, **kwargs)
+#         self.user_id: int = _handle_varchar(data["user"])
+#         self.length: str = _handle_varchar(data["length"])
+#         self.reminder: Optional[str] = _handle_varchar(data["reminder"])
 
 
 class Status(Base):
@@ -554,7 +540,8 @@ class Status(Base):
 
 class GlobalVar(Base):
     table = Table.GLOBALVARS
-    columns: tuple[str, ...] = ("variableName", "variableData", "variableData2")
+    columns: tuple[str, ...] = (
+        "variableName", "variableData", "variableData2")
 
     def __init__(self, database: Database, /, data: GlobalVarsData) -> None:
         self.data: GlobalVarsData = data
@@ -592,7 +579,7 @@ table_to_cls: dict[Table, Any] = {
     Table.GUILDS: Guild,
     Table.GUILDBLACKLIST: GuildBlacklist,
     Table.GLOBALVARS: GlobalVar,
-    Table.REMINDERS: Reminder,
+    # Table.REMINDERS: Reminder,
     Table.STATUS: Status,
     Table.USERS: User,
     Table.USER_ECONOMY: UserEconomy,

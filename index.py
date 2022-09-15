@@ -17,8 +17,8 @@ from sentry_sdk.integrations.threading import ThreadingIntegration
 from Manager.database import Database
 from Manager.logger import formatColor
 from utils import imports, permissions
-from utils.embeds import EmbedMaker as Embed
 from utils.errors import DatabaseError, DisabledCommand
+from utils.views import APIImageReporter, APIImageDevReport
 
 # Set timezone
 os.environ["TZ"] = "America/New_York"
@@ -31,7 +31,6 @@ else:
     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
 init()
-discord.http._set_api_version(9)  # type: ignore
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -68,45 +67,8 @@ slash_errors = (
     app_commands.MissingPermissions,
 )
 
-# class AutopostingReport(discord.ui.View):
-#     def __init__(self, ctx: commands.Context):
-#         super().__init__(timeout=None)
-#         self.ctx = ctx
 
-#     @discord.ui.button(
-#         label="✅",
-#         style=discord.ButtonStyle.blurple,
-#         custom_id="AGBCustomID_verify",
-#     )
-#     async def good(self, i: discord.Interaction, b: discord.ui.Button):
-#         url = i.message.url
-#         user = []
-#         user_script = f"""
-#                 Hello user, the image you reported does not fall under our image report guidelines. You must only report an image if the image falls under these guidelines:
-#                 __*__ Not porn(actual porn, lewd / suggestive positions and actions, etc)
-#                 __*__ Gross(scat, gore, etc)
-#                 __*__ Breaks ToS(shota, loli, etc)
-
-#                 If you continue to report images that are not eligible to be reported, you will get a 3 day blacklist. If you continue your blacklist will be  permanent.
-
-#                 The image(s) that do not follow our guidelines: {url}"""
-
-#         # get the user that reported the image
-#         # dm the user the user_script
-#         b.disabled = True
-#         await i.response.edit_message(view=self)
-#         await i.followup.send(f"DM'd {user}.", ephemeral=True)
-
-#     @discord.ui.button(
-#         label="❌",
-#         style=discord.ButtonStyle.blurple,
-#         custom_id="AGBCustomID_verify",
-#     )
-#     async def bad(self, i: discord.Interaction, b: discord.ui.Button):
-#         # delete the image from the api
-
-#         await i.message.delete()
-#         return
+#
 
 
 # async def create_slash_embed(self, interaction, error):
@@ -130,32 +92,20 @@ class AGBTree(app_commands.CommandTree):
     async def call(self, interaction):
         from utils.default import log
 
-        await super().call(interaction)
+        await super()._call(interaction)
         if interaction.user.id in config.owners:
             log(
                 f"{formatColor('[DEV]', 'bold_red')} {formatColor(interaction.user, 'red')} used command {formatColor(interaction.command.name, 'grey')}"
             )
             return
-        else:
-            log(
-                f"{formatColor(interaction.user.id, 'grey')} used command {formatColor(interaction.command.name, 'grey')} in {formatColor(interaction.guild.id, 'grey')}"
-            )
-
-    # async def on_error(self, interaction, error):
-    #     await interaction.response.defer(thinking=True)
-    #     if isinstance(error, discord.errors.InteractionResponded):
-    #         return
-    #     elif isinstance(error, app_commands.CommandNotFound):
-    #         return
-    #     elif isinstance(error, slash_errors):
-    #         await create_slash_embed(self, interaction, error)
-    #         return
-    #     elif isinstance(error, app_commands.CommandInvokeError):
-    #         return
+        log(
+            f"{formatColor(interaction.user.id, 'grey')} used command {formatColor(interaction.command.name, 'grey')} in {formatColor(interaction.guild.id, 'grey')}"
+        )
 
 
 # Don't touch this.
-sentry_logging = LoggingIntegration(level=logging.INFO, event_level=logging.ERROR)
+sentry_logging = LoggingIntegration(
+    level=logging.INFO, event_level=logging.ERROR)
 sentry_sdk.init(
     config.sentryDSN,
     integrations=[
@@ -167,6 +117,8 @@ sentry_sdk.init(
     traces_sample_rate=1.0,
 )
 
+partners = ["melonbot.io", "Play with us: mc.lunardev.group"]
+
 
 class Bot(commands.AutoShardedBot):
     def __init__(self, intents: discord.Intents, *args, **kwargs) -> None:
@@ -174,7 +126,7 @@ class Bot(commands.AutoShardedBot):
         default_status = "AGB Beta <3" if DEV else "Hi <3"
         self.embed_color = kwargs.get("embed_color", 3429595)
         super().__init__(
-            command_prefix=self.default_prefix,
+            command_prefix=commands.when_mentioned_or("tp!"),
             strip_after_prefix=True,
             case_insensitive=True,
             owner_ids=config.owners,
@@ -192,6 +144,7 @@ class Bot(commands.AutoShardedBot):
         )
 
         self.launch_time = datetime.now(timezone.utc)
+        self.partners = random.choice(partners)
         self.message_cooldown = commands.CooldownMapping.from_cooldown(
             1.0, random.randint(1, 5), commands.BucketType.guild
         )
@@ -200,12 +153,11 @@ class Bot(commands.AutoShardedBot):
         self.add_check(self.global_commands_check)
 
     async def setup_hook(self):
-        await self.db.initate_database(chunk=False)
-        from Cogs.admin import PersistentView
+        await self.db.initate_database(chunk=True)
         from utils.default import log
 
-        self.add_view(PersistentView(self))
-        # self.add_view(AutopostingReport(self))
+        self.add_view(APIImageReporter())
+        self.add_view(APIImageDevReport())
         try:
             await self.load_extension("jishaku")
             log("Loaded JSK.")
@@ -231,54 +183,6 @@ class Bot(commands.AutoShardedBot):
     async def on_message(self, msg) -> None:
         if not self.is_ready() or msg.author.bot or not permissions.can_send(msg):
             return
-
-        # PREFIX = (await self.get_prefix(self, msg))[0]
-        # if msg.content.lower().startswith(PREFIX):
-        #     msg.content = (
-        #         msg.content[: len(PREFIX)].lower() + msg.content[len(PREFIX):]
-        #     ) # Thanks Soheab, but im fixing things?
-
-        if msg.content.lower().startswith("tp!"):
-            msg.content = msg.content[: len("tp!")].lower() + msg.content[len("tp!") :]
-        if bot.user in msg.mentions:
-            current_guild_info = self.db.get_guild(
-                msg.guild.id
-            ) or await self.db.fetch_guild(msg.guild.id)
-            if current_guild_info:
-                embed = Embed(
-                    title="Hi! My name is AGB!",
-                    url=Website,
-                    colour=colors.prim,
-                    description=f"If you like me, please take a look at the links below!\n[Add me]({config.Invite}) | [Support Server]({config.Server}) | [Vote]({config.Vote})",
-                    timestamp=msg.created_at,
-                )
-                embed.add_field(
-                    name="Prefix for this server:", value=f"{current_guild_info.prefix}"
-                )
-                embed.add_field(
-                    name="Help command", value=f"{current_guild_info.prefix}help"
-                )
-                embed.set_footer(
-                    text="lunardev.group",
-                    icon_url=msg.author.avatar,
-                )
-                bucket = self.message_cooldown.get_bucket(msg)
-                if retry_after := bucket.update_rate_limit():
-                    return
-                if (
-                    msg.reference is None
-                    and random.randint(1, 2) == 1
-                    or msg.reference is not None
-                ):
-                    return
-                try:
-                    await msg.channel.send(embed=embed)
-                    return
-                except Exception:
-                    await msg.channel.send(
-                        f"**Hi, My name is AGB!**\nIf you like me and want to know more information about me, please enable embed permissions in your server settings so I can show you more information!\nIf you don't know how, please join the support server and ask for help!\n{config.Server}"
-                    )
-
         await self.process_commands(msg)
 
     async def on_message_edit(self, before, after):
@@ -320,7 +224,6 @@ class Bot(commands.AutoShardedBot):
 
 intents = discord.Intents.default()
 intents.members = True
-# intents.message_content = True
 
 bot = Bot(intents)
 

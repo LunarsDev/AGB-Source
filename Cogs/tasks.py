@@ -43,8 +43,6 @@ class Tasks(commands.Cog, name="task"):
         self.loop = asyncio.get_event_loop()
         self.last_guild_count = 0
         self.last_user_count = 0
-        # self.fear_apiUrl = "https://fearvps.tk/api/users/edit"
-        # self.fear_api.start()
         self.config = imports.get("config.json")
         with contextlib.suppress(Exception):
             if not DEV:
@@ -54,7 +52,8 @@ class Tasks(commands.Cog, name="task"):
                 self.api.set_auth("blist.xyz", self.config.blist)
                 self.api.set_auth("discordlist.space", self.config.discordlist)
                 self.api.set_auth("discord.bots.gg", self.config.discordbots)
-                self.api.set_auth("bots.discordlabs.org", self.config.discordlabs)
+                self.api.set_auth("bots.discordlabs.org",
+                                  self.config.discordlabs)
                 self.api.start_loop()
         self.get_guilds.start()
 
@@ -83,37 +82,7 @@ class Tasks(commands.Cog, name="task"):
         await self.bot.wait_until_ready()
         await asyncio.sleep(5)
 
-    # async def post_fear(self):
-    #     headers = {"Content-Type": "application/json"}
-    #     data = {
-    #         "pass": "Motz$Fear11",
-    #         "user": "motz",
-    #         "bot_users": len(self.bot.users),
-    #         "bot_servers": len(self.bot.guilds),
-    #         "bot_shards": len(self.bot.shards),
-    #     }
-    #     async with aiohttp.ClientSession() as f:
-    #         async with f.post(self.fear_apiUrl, json=data, headers=headers) as r:
-    #             if r.status == 200:
-    #                 # Successful Post
-    #                 # print(f"{await r.json()}")
-    #                 pass
-    #             elif r.status == 400:
-    #                 log(f"{await r.json()}")
-    #                 # pass
-    #             elif r.status == 201:
-    #                 # Successful Post
-    #                 # print(f"{await r.json()}")
-    #                 pass
-    #             pass
-
-    # @tasks.loop(minutes=1)
-    # async def fear_api(self):
-    #     await self.bot.wait_until_ready()
-    #     # await self.post_fear()
-
     async def cog_unload(self):
-        # self.fear_api.stop()
         self.api.stop()
         self.get_guilds.stop()
 
@@ -188,7 +157,7 @@ class Tasks(commands.Cog, name="task"):
     async def presence_loop(self):
         if datetime.datetime.now().month == 10 and datetime.datetime.now().day == 3:
             await self.bot.change_presence(
-                activity=discord.Game(name="Happy birthday Motz!")
+                activity=discord.Game(name="Happy birthday Motz! | $motzumoto")
             )
             return
 
@@ -205,8 +174,10 @@ class Tasks(commands.Cog, name="task"):
             return
 
         db_status = status_from_id.status
-        server_count = db_status.replace("{server_count}", str(len(self.bot.guilds)))
-        status = server_count.replace("{command_count}", str(len(self.bot.commands)))
+        server_count = db_status.replace(
+            "{server_count}", str(len(self.bot.guilds)))
+        status = server_count.replace(
+            "{command_count}", str(len(self.bot.commands)))
 
         if DEV:
             await self.bot.change_presence(
@@ -255,11 +226,10 @@ class Tasks(commands.Cog, name="task"):
     async def status_page(self):
         # Post AGB status to status page
         if not DEV:
-            async with aiohttp.ClientSession() as s:
-                async with s.get(
-                    f"https://status.lunardev.group/api/push/8Km8kzfUfH?status=up&msg=OK&ping={round(self.bot.latency * 1000)}"
-                ) as r:
-                    await r.json()
+            async with aiohttp.ClientSession() as s, s.get(
+                f"https://status.lunardev.group/api/push/8Km8kzfUfH?status=up&msg=OK&ping={round(self.bot.latency * 1000)}"
+            ) as r:
+                await r.json()
 
     @status_page.before_loop
     async def delay_task_until_bot_ready(self):

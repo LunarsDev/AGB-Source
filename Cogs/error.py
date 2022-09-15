@@ -1,17 +1,16 @@
 from __future__ import annotations
-from typing import TYPE_CHECKING, Any, ClassVar, Optional, Union
 
 from asyncio import TimeoutError
 from random import randint
+from typing import TYPE_CHECKING, Any, ClassVar, Optional, Union
 
 from discord import Message, TextChannel
 from discord.errors import HTTPException, InteractionResponded, NotFound
 from discord.ext import commands
 from discord.ext.commands.cooldowns import CooldownMapping
+from discord.app_commands.errors import CommandNotFound as AppCommandNotFound
 from discord.ext.commands.errors import (
     BotMissingPermissions,
-    # CheckFailure,
-    CommandError,
     CommandInvokeError,
     CommandNotFound,
     CommandOnCooldown,
@@ -30,18 +29,13 @@ from discord.ext.commands.errors import (
 from index import config
 from Manager.logger import formatColor
 from sentry_sdk import capture_exception, last_event_id
-
-from utils.embeds import EmbedMaker as Embed
 from utils.checks import MusicGone, NotVoted
 from utils.default import log
-from utils.errors import BlacklistedUser, DatabaseError, DisabledCommand
-
-# from re import compile, IGNORECASE
-# from typing import Pattern
+from utils.embeds import EmbedMaker as Embed
+from utils.errors import BlacklistedUser, ChatbotFailure, DatabaseError, DisabledCommand
 
 
 if TYPE_CHECKING:
-    from discord import Message
     from discord.app_commands.checks import Cooldown
     from index import Bot
 
@@ -52,32 +46,30 @@ class Error(commands.Cog, name="error"):
     def __init__(self, bot: Bot):
         self.bot: Bot = bot
         self.message_cooldown: CooldownMapping[Message] = CooldownMapping.from_cooldown(
-            rate=1.0, per=randint(5, 45), type=commands.BucketType.user
+            rate=1.0, per=randint(5, 20), type=commands.BucketType.user
         )
-        # self.nword_re: Pattern[str] = compile(
-        #   r"(n|m|и|й)(i|1|l|!|ᴉ|¡)(g|ƃ|6|б)(g|ƃ|6|б)(e|3|з|u)(r|Я)",
-        #   IGNORECASE
-        # )
         self.to_ignore = (
             CommandNotFound,
             HTTPException,
             NotFound,
             InteractionResponded,
+            AppCommandNotFound,
             # CheckFailure,
         )
         self.send_embed = (
+            # owner
+            NotOwner,
             # custom errors
             NotVoted,
             MusicGone,
             DisabledCommand,
             BlacklistedUser,
             DatabaseError,
+            ChatbotFailure,
             # user input errors
             UserInputError,
             # extensions
             ExtensionError,
-            # owner
-            NotOwner,
             # others command errors
             MaxConcurrencyReached,
             DisabledCommandError,
@@ -93,19 +85,21 @@ class Error(commands.Cog, name="error"):
     async def create_embed(
         self,
         ctx: commands.Context,
-        error: Union[CommandError, HybridCommandError, Exception],
+        error: Union[HybridCommandError, Exception],
     ):
-        assert ctx.command
-        emb = Embed(title="📣 Error!", description=str(error), color=self.DEFAULT_COLOR)
+        if not ctx.command:
+            raise AssertionError
+        emb = Embed(title="📣 Error!", description=str(
+            error), color=self.DEFAULT_COLOR)
         emb.set_author(
             name=f"{ctx.author.name} | Command: {ctx.command.qualified_name}",
             icon_url=ctx.author.display_avatar.url,
         )
         await self.try_send(ctx, error, emb)
 
-    def _handle_args(self, *contents: Union[Embed, Message, str]) -> dict[str, Any]:
+    def _handle_args(self) -> dict[str, Any]:
         kwargs = {}
-        for content in contents:
+        for content in self:
             if isinstance(content, Embed):
                 if "embeds" in kwargs:
                     kwargs["embeds"].append(content)
@@ -121,7 +115,7 @@ class Error(commands.Cog, name="error"):
     async def try_send(
         self,
         ctx: commands.Context,
-        error: Union[CommandError, HybridCommandError, Exception],
+        error: Union[HybridCommandError, Exception],
         *args: Union[Embed, Message, str],
         **kwargs,
     ):
@@ -145,7 +139,7 @@ class Error(commands.Cog, name="error"):
     async def on_command_error(
         self,
         ctx: commands.Context,
-        error: Union[CommandError, HybridCommandError, Exception],
+        error: Union[HybridCommandError, Exception],
     ) -> Any:
         if isinstance(error, CommandInvokeError):
             error = error.original
@@ -153,7 +147,8 @@ class Error(commands.Cog, name="error"):
         if isinstance(error, self.to_ignore):
             return
 
-        assert ctx.command, "ctx.command was None!"
+        if not ctx.command:
+            raise AssertionError("ctx.command was None!")
         if isinstance(error, self.send_embed):
             await self.create_embed(ctx, error)
             return
@@ -162,7 +157,9 @@ class Error(commands.Cog, name="error"):
             return
 
         if isinstance(error, (MissingPermissions, BotMissingPermissions)):
-            bot_or_user = "I'm" if isinstance(error, BotMissingPermissions) else "You"
+            bot_or_user = (
+                "I'm" if isinstance(error, BotMissingPermissions) else "You're"
+            )
             missing_permissions = ", ".join(error.missing_permissions)
             emb = Embed(
                 title="👮‍♂️ Permissions Error",
@@ -175,9 +172,10 @@ class Error(commands.Cog, name="error"):
             )
             await self.try_send(ctx, error, emb)
         elif isinstance(error, MissingRequiredArgument):
-            assert (
-                ctx.command
-            ), "Command is None but MissingRequiredArgument was raised."
+            if not (ctx.command):
+                raise AssertionError(
+                    "Command is None but MissingRequiredArgument was raised."
+                )
             emb = Embed(
                 title="💬 Missing required argument!",
                 color=self.DEFAULT_COLOR,
@@ -194,7 +192,10 @@ class Error(commands.Cog, name="error"):
             )
             await self.try_send(ctx, error, emb)
         elif isinstance(error, CommandOnCooldown):
-            assert ctx.command, "Command is None but CommandOnCooldown was raised."
+            if not ctx.command:
+                raise AssertionError(
+                    "Command is None but CommandOnCooldown was raised."
+                )
             log(
                 f"{formatColor(ctx.author.name, 'gray')} tried to use {ctx.command.name} but it was on cooldown for {error.retry_after:.2f} seconds."
             )
@@ -207,7 +208,8 @@ class Error(commands.Cog, name="error"):
                 description="This command has a cooldown for ",
                 color=self.DEFAULT_COLOR,
             )
-            assert emb.description is not None
+            if emb.description is None:
+                raise AssertionError
             emb.set_author(
                 name=f"{ctx.author.name} | Command: {ctx.command.qualified_name}",
                 icon_url=ctx.author.display_avatar.url,
@@ -252,7 +254,8 @@ class Error(commands.Cog, name="error"):
                 description=f"*An unknown error occurred!*\n\n**Join the server with your Error ID for support: {config.Server}.**",
             )
 
-            errorResEmbed.set_footer(text="This error has been automatically logged.")
+            errorResEmbed.set_footer(
+                text="This error has been automatically logged.")
             await self.try_send(
                 ctx, error, content=f"**Error ID:** `{event_id}`", embed=errorResEmbed
             )
@@ -262,7 +265,8 @@ class Error(commands.Cog, name="error"):
             )
             if issue_url:
                 embed.url = issue_url
-            embed.add_field(name="Event ID", value=f"`{event_id}`", inline=False)
+            embed.add_field(name="Event ID",
+                            value=f"`{event_id}`", inline=False)
             embed.add_field(
                 name="Issue URL", value=f"[Click here]({issue_url})", inline=False
             )
