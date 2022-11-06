@@ -287,7 +287,10 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
         Server = self.bot.get_guild(755722576445046806)
 
         cog = self.bot.get_cog("ap")
-        when = discord.utils.format_dt(cog.autoh.next_iteration, style="R")
+        try:
+            when = discord.utils.format_dt(cog.autoh.next_iteration, style="R")
+        except Exception:
+            when = "**`Cannot determine at this time.`**"
         # check if the command was used as an interaction
         ephemeral = ctx.interaction is not None
         if not channel.is_nsfw():
@@ -381,7 +384,7 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
         await ctx.typing(ephemeral=True)
         # return await ctx.send("This command is being on.", ephemeral=True)
         if ctx.invoked_subcommand is None:
-            return await ctx.send("Invalid nsfw command. Please use `/help nsfw` to see the nsfw commands.")
+            return await ctx.send("Invalid nsfw command. Please use `@AGB help nsfw` to see the nsfw commands.")
 
     @nsfw.command()
     @voter_only()
@@ -582,7 +585,7 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
         await ctx.typing(ephemeral=True)
         # return await ctx.send("This command is being on.", ephemeral=True)
         if ctx.invoked_subcommand is None:
-            return await ctx.send("Invalid nsfw command. Please use `/help reddit_irl` to see the nsfw commands.")
+            return await ctx.send("Invalid nsfw command. Please use `@AGB help reddit_irl` to see the nsfw commands.")
 
     @commands.hybrid_group()
     @voter_only()
@@ -592,7 +595,9 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
         await ctx.typing(ephemeral=True)
         # return await ctx.send("This command is being on.", ephemeral=True)
         if ctx.invoked_subcommand is None:
-            return await ctx.send("Invalid nsfw command. Please use `/help reddit_drawing` to see the nsfw commands.")
+            return await ctx.send(
+                "Invalid nsfw command. Please use `@AGB help reddit_drawing` to see the nsfw commands."
+            )
 
     @commands.hybrid_group()
     @voter_only()
@@ -602,7 +607,7 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
         await ctx.typing(ephemeral=True)
         # return await ctx.send("This command is being on.", ephemeral=True)
         if ctx.invoked_subcommand is None:
-            return await ctx.send("Invalid nsfw command. Please use `/help reddit` to see the nsfw commands.")
+            return await ctx.send("Invalid nsfw command. Please use `@AGB help reddit` to see the nsfw commands.")
 
     @reddit_irl.command()
     @voter_only()

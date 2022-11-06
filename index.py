@@ -54,8 +54,8 @@ Logo = "https://lunardev.group/assets/logo.png"
 Server = "https://discord.gg/cNRNeaX"
 Vote = "https://top.gg/bot/723726581864071178/vote"
 Invite = "https://discord.com/api/oauth2/authorize?client_id=723726581864071178&permissions=2083908950&scope=bot"
-BID = "notforyou"
-CHAT_API_KEY = "notforyou"
+BID = "157421"
+CHAT_API_KEY = "nbgYpq2Wh3MRVEm0"
 
 slash_errors = (
     app_commands.CommandOnCooldown,
@@ -108,7 +108,7 @@ sentry_sdk.init(
     traces_sample_rate=1.0,
 )
 
-partners = ["dash.lunardev.group", "connect.twisea.net"]
+partners = ["dash.lunardev.group", "connect.twisea.net", "user.lunardev.group"]
 
 
 class AGB(commands.AutoShardedBot):

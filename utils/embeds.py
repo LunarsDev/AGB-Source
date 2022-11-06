@@ -12,7 +12,7 @@ from discord.ext.commands.context import Context
 prim_color = 0x2F3136
 website = "https://lunardev.group"
 logo = "https://lunardev.group/assets/logo.png"
-partners = ["dash.lunardev.group", "connect.twisea.net"]
+partners = ["dash.lunardev.group", "connect.twisea.net", "user.lunardev.group"]
 
 
 if TYPE_CHECKING:
@@ -87,9 +87,7 @@ class EmbedMaker(DpyEmbed):
         image: Optional[str] = None,
     ) -> None:
         _color = colour if colour is not MISSING else color
-
-        if url is MISSING:
-            url = website
+        url = website if url is MISSING else url if url is not None else None
         if _color is MISSING:
             color = prim_color
         elif _color is None:

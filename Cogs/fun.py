@@ -916,8 +916,7 @@ class Fun(commands.Cog, name="fun"):
     async def owoify(self, ctx, *, text: commands.clean_content):
         """Owoify any message"""
         owoified = nekos.owoify(text)
-        embed = Embed(description=owoified, thumbnail=None)
-        await ctx.send(embed=embed)
+        await Embed(description=owoified, thumbnail=None).send(ctx)
 
     @actions.command()
     @commands.bot_has_permissions(embed_links=True)
@@ -925,8 +924,7 @@ class Fun(commands.Cog, name="fun"):
     async def why(self, ctx):
         """why"""
         why = nekos.why()
-        embed = Embed(description=why, thumbnail=None)
-        await ctx.send(embed=embed)
+        await Embed(description=why, thumbnail=None).send(ctx)
 
     @actions.command()
     @commands.bot_has_permissions(embed_links=True)
@@ -936,19 +934,17 @@ class Fun(commands.Cog, name="fun"):
         async with aiohttp.ClientSession() as session:
             resp = await session.get("https://useless-facts.sameerkumar.website/api")
             fact = (await resp.json())["data"]
-        embed = Embed(description=fact, thumbnail=None)
-        await ctx.send(embed=embed)
+        await Embed(description=fact, thumbnail=None).send(ctx)
 
     @actions.command()
     @commands.bot_has_permissions(embed_links=True)
     @permissions.dynamic_ownerbypass_cooldown(1, 2, type=commands.BucketType.user)
-    async def insult(self, ctx):
+    async def insult(self, ctx, person: discord.Member):
         """Get a random insult"""
         async with aiohttp.ClientSession() as session:
             resp = await session.get("https://evilinsult.com/generate_insult.php?lang=en&type=json")
             insult = (await resp.json())["insult"]
-        embed = Embed(description=insult, thumbnail=None)
-        await ctx.send(embed=embed)
+        await Embed(description=f"{person.name}, {insult.lower()}", thumbnail=None).send(ctx)
 
     @actions.command()
     @commands.bot_has_permissions(embed_links=True)
@@ -1164,7 +1160,7 @@ class Fun(commands.Cog, name="fun"):
     @actions.command()
     @commands.bot_has_permissions(embed_links=True)
     @permissions.dynamic_ownerbypass_cooldown(1, 15, commands.BucketType.user)
-    async def hack(self, ctx, user: MemberConverter = None):
+    async def hack(self, ctx, user: discord.Member):
         """Hack a user, totally real and legit"""
         await ctx.typing()
         if user is None:

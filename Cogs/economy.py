@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import aiohttp
 from discord import Member
 from discord.ext import commands
 from Manager.emoji import Emoji

@@ -354,7 +354,7 @@ class Badge(AGBRecord):
     def __init__(self, name: str, database: Database, record: Record) -> None:
         super().__init__(database, record)
         self.name: str = name
-        self.user_ids: list[int] = list(self.original_record[self.name])
+        self.user_ids: list[int] = list(self.original_record[self.name] or [])
 
     def has(self, user_id: int) -> bool:
         return user_id in self.user_ids

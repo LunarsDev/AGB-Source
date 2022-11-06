@@ -4,23 +4,20 @@ import asyncio
 import contextlib
 import json
 import re
-import aiohttp
-import urllib.parse
 from io import BytesIO
 from typing import List, TYPE_CHECKING, Union
 
 import discord
-from defusedxml.ElementTree import parse
 from discord import app_commands
 from discord.ext import commands
-from index import Website, colors, config
+from index import Website, colors
 from Manager.emoji import Emoji
-from sentry_sdk import capture_exception
 from utils import default, imports, permissions
 from utils.embeds import EmbedMaker as Embed
 
 
 if TYPE_CHECKING:
+    from Manager.database import User as DBUser, Blacklist as DBBlacklist, Badge as DBBadge
     from index import AGB
 
 
@@ -31,14 +28,14 @@ class UserinfoPermissionView(discord.ui.View):
         user: Union[discord.Member, discord.User],
         initial_embed: discord.Embed,
         message: discord.Message,
-        db_user,
+        db_info: tuple[DBUser, DBBlacklist, list[DBBadge]],
     ):
         super().__init__(timeout=120)
         self.ctx = ctx
         self.user = user
         self.initial_embed = initial_embed
         self.message = message
-        self.db_user = db_user
+        self.db_user, self.db_blacklist, self.db_badges = db_info
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id == self.ctx.author.id:
@@ -86,15 +83,13 @@ class UserinfoPermissionView(discord.ui.View):
         self.agb_user_stats.disabled = True
         self.user_info.disabled = False
 
-        used_cmds = ""
-        if self.db_user.used_commands is None:
-            used_cmds = "None"
-        else:
-            used_cmds = f"{self.db_user.used_commands}"
+        used_commands = self.db_user.used_commands or "None"
+        badges = ", ".join(b.name for b in self.db_badges) or "None"
+
         embed = Embed(title="AGB User Stats")
         embed.add_field(
             name="Commands Used",
-            value=used_cmds,
+            value=used_commands,
             inline=False,
         )
         embed.add_field(
@@ -104,7 +99,12 @@ class UserinfoPermissionView(discord.ui.View):
         )
         embed.add_field(
             name="Is Blacklisted?",
-            value=f"{'Yes' if self.db_user.blacklisted == 'true' else 'No'}",
+            value=f"{['No', 'Yes'][self.db_blacklist.blacklisted]}",
+            inline=False,
+        )
+        embed.add_field(
+            name="Badges",
+            value=badges,
             inline=False,
         )
         await interaction.response.edit_message(content=None, embed=embed, view=self)
@@ -731,9 +731,11 @@ You can give yourself the colors by doing `/colorme <color>`. \nExample: `/color
                 if ctx.guild.get_member(user.id)
                 else ""
             )
-        db_user = await self.bot.db.fetch_user(user.id)
-        if not db_user:
-            db_user = await self.bot.db.add_user(user.id)
+
+        db_blacklist = await self.bot.db.getch("blacklist", user.id) or await self.bot.db.add_blacklist(user.id)
+        db_user = await self.bot.db.getch("users", user.id) or await self.bot.db.add_user(user.id)
+        all_db_badges = await self.bot.db.fetch_badges()
+        db_badges = [badge for badge in all_db_badges if badge.has(user.id)]
         try:
             if len(chunked) == len(self.bot.guilds):
                 mutuals = f"\nMutual Servers: `{len(self.bot.guilds)} server(s)`"
@@ -758,7 +760,7 @@ You can give yourself the colors by doing `/colorme <color>`. \nExample: `/color
             user=user,
             initial_embed=embed,
             message=fetching,
-            db_user=db_user,
+            db_info=(db_user, db_blacklist, db_badges),
         )
         await fetching.edit(
             content=None,

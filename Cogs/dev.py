@@ -2,22 +2,24 @@ from __future__ import annotations
 
 import datetime
 import random
+from io import BytesIO
 from typing import TYPE_CHECKING
 
 import aiohttp
 import discord
 from discord import Member
 from discord.ext import commands, tasks
-from index import config
 from lunarapi import Client, endpoints
+
+from index import config
 from utils import imports, permissions
 from utils.default import log
 from utils.embeds import EmbedMaker as Embed
 
-from Cogs.admin import OS
-
 if TYPE_CHECKING:
     from index import AGB
+
+OS = discord.Object(id=975810661709922334)
 
 
 class MemberConverter(commands.MemberConverter):
@@ -49,7 +51,7 @@ class Dev(commands.Cog, name="dev"):
     @commands.check(permissions.is_owner)
     async def dev(self, ctx: commands.Context):
         """Owner-only commands."""
-        await ctx.send("Owner-only commands.", ephemeral=True)
+        await ctx.send("Owner-only commands.", ephemeral=True, delete_after=10)
 
     @dev.command(name="welcome")
     @commands.check(permissions.is_owner)
@@ -65,9 +67,13 @@ class Dev(commands.Cog, name="dev"):
                 username=user.name,
                 members=f"{ctx.guild.member_count}",
             )
+            byts = BytesIO(await image.bytes())
+            file = discord.File(byts, f"{user.id}.png")
 
             print(dir(image))
-            await ctx.send(file=await image.file(discord))
+            embed = Embed(title="welcome")
+            embed.set_image(url=f"attachment://{user.id}.png")
+            await ctx.send(embed=embed, file=file)
 
     @dev.command(name="htest")
     @commands.check(permissions.is_owner)

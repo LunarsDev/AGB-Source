@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from asyncio import TimeoutError
 from random import randint
-import traceback
 from typing import TYPE_CHECKING, Any, ClassVar, Optional, Union
 
 from discord import Message, TextChannel

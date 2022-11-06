@@ -1038,7 +1038,7 @@ class Moderator(commands.Cog, name="mod"):
                     "I was unable to perform this action! Please check my permissions.",
                     ephemeral=True,
                 )
-            except:
+            except Exception:
                 pass
 
     @channel.command()

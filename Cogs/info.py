@@ -6,6 +6,13 @@ import json
 import os
 import pathlib
 import random
+from typing import Optional, TYPE_CHECKING
+
+from discord.ext import commands
+import discord
+import os
+import inspect
+
 import secrets
 from typing import TYPE_CHECKING, List, Optional
 
@@ -235,7 +242,7 @@ class Information(commands.Cog, name="info"):
                 author=(ctx.author.name, ctx.author.avatar),
                 thumbnail=None,
             ).send(ctx, ephemeral=ephemeral)
-        except OverflowError:
+        except Exception:
             await Embed(
                 title="Ping",
                 description="Ping cannot be calculated right now.",
@@ -501,6 +508,39 @@ class Information(commands.Cog, name="info"):
         await ctx.send(
             embed=embed,
         )
+
+    # taken from https://github.com/Rapptz/RoboDanny/blob/rewrite/cogs/meta.py#L402-L443
+    @permissions.dynamic_ownerbypass_cooldown(1, 5, commands.BucketType.user)
+    @commands.hybrid_command()
+    @commands.bot_has_permissions(embed_links=True)
+    async def source(self, ctx, *, command: str = None):
+        """Displays the code to commands and the source of this bot."""
+        source_url = "https://github.com/LunarsDev/AGB-Source"
+        branch = "master"
+        if command is None:
+            return await ctx.send(source_url)
+
+        if command == "help":
+            src = type(self.bot.help_command)
+            filename = inspect.getsourcefile(src)
+        else:
+            obj = self.bot.get_command(command.replace(".", " "))
+            if obj is None:
+                return await ctx.send("Could not find command.")
+
+            # since we found the command we're looking for, presumably anyway, let's
+            # try to access the code itself
+            src = obj.callback.__code__
+            filename = src.co_filename
+
+        lines, firstlineno = inspect.getsourcelines(src)
+        if filename is None:
+            return await ctx.send("Could not find source for command.")
+
+        else:
+            location = os.path.relpath(filename).replace("\\", "/")
+        final_url = f"<{source_url}/blob/{branch}/{location}#L{firstlineno}-L{firstlineno + len(lines) - 1}>"
+        await ctx.send(final_url)
 
     @permissions.dynamic_ownerbypass_cooldown(1, 5, commands.BucketType.user)
     @commands.hybrid_command()

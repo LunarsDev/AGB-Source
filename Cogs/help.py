@@ -39,7 +39,7 @@ class HelpMenu(menus.ListPageSource):
 
 class FormattedHelp(commands.HelpCommand):
     def __init__(self):
-        super().__init__(command_attrs={"usage": "`/help (command/category)`", "hidden": True})
+        super().__init__(command_attrs={"usage": "`@AGB help (command/category)`", "hidden": True})
 
     async def cog_check(ctx):
         """A local check which applies to all commands in this cog."""
@@ -168,8 +168,8 @@ class FormattedHelp(commands.HelpCommand):
             mod_names = "".join(f"`{name}`, " for name in mod_q)
 
             if self.context.channel.is_nsfw():
-                description = f"""For help on individual commands, use `/help <command>`.\n\n**{await Emoji.rand_rainbow()} {info_cog.qualified_name.capitalize()}**\n{info_names}\n\n**{await Emoji.rand_rainbow()} {fun_cog.qualified_name.capitalize()}**\n{fun_names}\n\n**{await Emoji.rand_rainbow()} {guild_cog.qualified_name.capitalize()}**
-				{guild_names}\n\n**{await Emoji.rand_rainbow()} {mod_cog.qualified_name.capitalize()}**\n{mod_names}\n\n**{await Emoji.rand_rainbow()} **{nsfw_cog.qualified_name.capitalize()}**\n{nsfw_names}\nalso, there are nsfw slash commands. make sure AGB has permission to register them in your server."""
+                description = f"""For help on individual commands, use `@AGB help <command>`.\n\n**{await Emoji.rand_rainbow()} {info_cog.qualified_name.capitalize()}**\n{info_names}\n\n**{await Emoji.rand_rainbow()} {fun_cog.qualified_name.capitalize()}**\n{fun_names}\n\n**{await Emoji.rand_rainbow()} {guild_cog.qualified_name.capitalize()}**
+				{guild_names}\n\n**{await Emoji.rand_rainbow()} {mod_cog.qualified_name.capitalize()}**\n{mod_names}\n\n{await Emoji.rand_rainbow()} **{nsfw_cog.qualified_name.capitalize()}**\n{nsfw_names}\nalso, there are nsfw slash commands. make sure AGB has permission to register them in your server."""
 
                 embed = Embed(
                     color=colors.prim,
@@ -179,7 +179,7 @@ class FormattedHelp(commands.HelpCommand):
                     text="If there is anything that you would like to see / changed, run /𝐬𝐮𝐠𝐠𝐞𝐬𝐭 with your suggestion!\nAlso check out our server host!"
                 )
             else:
-                description = f"""**{await Emoji.rand_rainbow()} {info_cog.qualified_name.capitalize()}**\n{info_names}\n\n**{await Emoji.rand_rainbow()} {fun_cog.qualified_name.capitalize()}**\n{fun_names}\n\n**{await Emoji.rand_rainbow()} {guild_cog.qualified_name.capitalize()}**\n{guild_names}\n\n**{await Emoji.rand_rainbow()} {mod_cog.qualified_name.capitalize()}**\n{mod_names}\n\n**{nsfw_cog.qualified_name.capitalize()}**\nNsfw commands are hidden. To see them run /help in any of these NSFW channels.\n{nsfw_channels}"""
+                description = f"""**{await Emoji.rand_rainbow()} {info_cog.qualified_name.capitalize()}**\n{info_names}\n\n**{await Emoji.rand_rainbow()} {fun_cog.qualified_name.capitalize()}**\n{fun_names}\n\n**{await Emoji.rand_rainbow()} {guild_cog.qualified_name.capitalize()}**\n{guild_names}\n\n**{await Emoji.rand_rainbow()} {mod_cog.qualified_name.capitalize()}**\n{mod_names}\n\n**{nsfw_cog.qualified_name.capitalize()}**\nNsfw commands are hidden. To see them run @AGB help in any of these NSFW channels.\n{nsfw_channels}"""
 
                 embed = Embed(
                     color=colors.prim,
@@ -205,7 +205,7 @@ class FormattedHelp(commands.HelpCommand):
 
         #         embed_description += f"**{await Emoji.rand_rainbow()} {cog.qualified_name.capitalize() or 'No Category'}**\n{qualified_names[:-2]}\n\n"
 
-        # embed = Embed(color=colors.prim, description=f"For help on individual commands, use `/help <command>`.\n\n{embed_description}")
+        # embed = Embed(color=colors.prim, description=f"For help on individual commands, use `@AGB help <command>`.\n\n{embed_description}")
         # embed.add_field(name='Support Server', value=f"[Click Me]({config.Server})")
         # embed.set_footer(text="If there is anything that you would like to see / changed, run /𝐬𝐮𝐠𝐠𝐞𝐬𝐭 with your suggestion!")
         # embed.set_thumbnail(url=self.context.bot.user.avatar)
