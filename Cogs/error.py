@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from asyncio import TimeoutError
 from random import randint
+import traceback
 from typing import TYPE_CHECKING, Any, ClassVar, Optional, Union
 
 from discord import Message, TextChannel
+from discord.app_commands.errors import CommandNotFound as AppCommandNotFound
 from discord.errors import HTTPException, InteractionResponded, NotFound
 from discord.ext import commands
 from discord.ext.commands.cooldowns import CooldownMapping
-from discord.app_commands.errors import CommandNotFound as AppCommandNotFound
 from discord.ext.commands.errors import (
     BotMissingPermissions,
     CommandInvokeError,
@@ -34,17 +35,16 @@ from utils.default import log
 from utils.embeds import EmbedMaker as Embed
 from utils.errors import BlacklistedUser, ChatbotFailure, DatabaseError, DisabledCommand
 
-
 if TYPE_CHECKING:
     from discord.app_commands.checks import Cooldown
-    from index import Bot
+    from index import AGB
 
 
 class Error(commands.Cog, name="error"):
     DEFAULT_COLOR: ClassVar[int] = 0xFF0000
 
-    def __init__(self, bot: Bot):
-        self.bot: Bot = bot
+    def __init__(self, bot: AGB):
+        self.bot: AGB = bot
         self.message_cooldown: CooldownMapping[Message] = CooldownMapping.from_cooldown(
             rate=1.0, per=randint(5, 20), type=commands.BucketType.user
         )
@@ -75,6 +75,7 @@ class Error(commands.Cog, name="error"):
             DisabledCommandError,
             # python error
             TimeoutError,
+            ValueError,
         )
 
     def is_on_cooldown(self, message: Message) -> bool:
@@ -89,17 +90,16 @@ class Error(commands.Cog, name="error"):
     ):
         if not ctx.command:
             raise AssertionError
-        emb = Embed(title="📣 Error!", description=str(
-            error), color=self.DEFAULT_COLOR)
+        emb = Embed(title="📣 Error!", description=str(error), color=self.DEFAULT_COLOR)
         emb.set_author(
             name=f"{ctx.author.name} | Command: {ctx.command.qualified_name}",
             icon_url=ctx.author.display_avatar.url,
         )
         await self.try_send(ctx, error, emb)
 
-    def _handle_args(self) -> dict[str, Any]:
+    def _handle_args(self, *contents: Union[Embed, Message, str]) -> dict[str, Any]:
         kwargs = {}
-        for content in self:
+        for content in contents:
             if isinstance(content, Embed):
                 if "embeds" in kwargs:
                     kwargs["embeds"].append(content)
@@ -127,11 +127,7 @@ class Error(commands.Cog, name="error"):
         except Exception as e:
             capture_exception(e)
             if any(k in ["embed", "embeds"] for k in kwargs):
-                embed_perms = (
-                    ctx.channel.permissions_for(ctx.guild.me).embed_links
-                    if ctx.guild
-                    else False
-                )
+                embed_perms = ctx.channel.permissions_for(ctx.guild.me).embed_links if ctx.guild else False
                 if not embed_perms:
                     await ctx.send(f"`{error}`\n***Enable embed permissions please.***")
 
@@ -157,9 +153,7 @@ class Error(commands.Cog, name="error"):
             return
 
         if isinstance(error, (MissingPermissions, BotMissingPermissions)):
-            bot_or_user = (
-                "I'm" if isinstance(error, BotMissingPermissions) else "You're"
-            )
+            bot_or_user = "I'm" if isinstance(error, BotMissingPermissions) else "You're"
             missing_permissions = ", ".join(error.missing_permissions)
             emb = Embed(
                 title="👮‍♂️ Permissions Error",
@@ -173,9 +167,7 @@ class Error(commands.Cog, name="error"):
             await self.try_send(ctx, error, emb)
         elif isinstance(error, MissingRequiredArgument):
             if not (ctx.command):
-                raise AssertionError(
-                    "Command is None but MissingRequiredArgument was raised."
-                )
+                raise AssertionError("Command is None but MissingRequiredArgument was raised.")
             emb = Embed(
                 title="💬 Missing required argument!",
                 color=self.DEFAULT_COLOR,
@@ -193,9 +185,7 @@ class Error(commands.Cog, name="error"):
             await self.try_send(ctx, error, emb)
         elif isinstance(error, CommandOnCooldown):
             if not ctx.command:
-                raise AssertionError(
-                    "Command is None but CommandOnCooldown was raised."
-                )
+                raise AssertionError("Command is None but CommandOnCooldown was raised.")
             log(
                 f"{formatColor(ctx.author.name, 'gray')} tried to use {ctx.command.name} but it was on cooldown for {error.retry_after:.2f} seconds."
             )
@@ -239,14 +229,10 @@ class Error(commands.Cog, name="error"):
             await self.try_send(ctx, error, emb)
         else:
             capture_exception(error)
-            error_collection_channel: TextChannel = self.bot.get_channel(
-                1012190141709828237
-            )  # type: ignore
+            error_collection_channel: TextChannel = self.bot.get_channel(1012190141709828237)  # type: ignore
             event_id: Optional[str] = last_event_id()
             issue_url: Optional[str] = (
-                f"https://sentry.hep.gg/organizations/lunar-development/issues/?query={event_id}"
-                if event_id
-                else None
+                f"https://sentry.hep.gg/organizations/lunar-development/issues/?query={event_id}" if event_id else None
             )
             errorResEmbed = Embed(
                 title="❌ Error!",
@@ -254,22 +240,16 @@ class Error(commands.Cog, name="error"):
                 description=f"*An unknown error occurred!*\n\n**Join the server with your Error ID for support: {config.Server}.**",
             )
 
-            errorResEmbed.set_footer(
-                text="This error has been automatically logged.")
-            await self.try_send(
-                ctx, error, content=f"**Error ID:** `{event_id}`", embed=errorResEmbed
-            )
+            errorResEmbed.set_footer(text="This error has been automatically logged.")
+            await self.try_send(ctx, error, content=f"**Error ID:** `{event_id}`", embed=errorResEmbed)
             embed = Embed(
                 title=f"New Bug Submitted By {ctx.author.name}.",
                 color=self.DEFAULT_COLOR,
             )
             if issue_url:
                 embed.url = issue_url
-            embed.add_field(name="Event ID",
-                            value=f"`{event_id}`", inline=False)
-            embed.add_field(
-                name="Issue URL", value=f"[Click here]({issue_url})", inline=False
-            )
+            embed.add_field(name="Event ID", value=f"`{event_id}`", inline=False)
+            embed.add_field(name="Issue URL", value=f"[Click here]({issue_url})", inline=False)
 
             embed.add_field(
                 name="ℹ️ More info:",
@@ -286,5 +266,5 @@ class Error(commands.Cog, name="error"):
         return
 
 
-async def setup(bot: Bot) -> None:
+async def setup(bot: AGB) -> None:
     await bot.add_cog(Error(bot))

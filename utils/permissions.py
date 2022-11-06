@@ -14,6 +14,7 @@ mcstaff = imports.config()["mcstaff"]
 
 def is_owner(ctx):
     """Checks if the author is one of the owners"""
+
     return ctx.author.id in owners
 
 
@@ -21,8 +22,9 @@ def is_mcstaff(ctx):
     return ctx.author.id in mcstaff
 
 
-async def is_owner_slash(interaction):
+async def is_owner_slash(interaction: discord.Interaction):
     """Checks if the interaction user is one of the owners"""
+
     await interaction.response.defer(ephemeral=True, thinking=True)
     if interaction.user.id in owners:
         return True
@@ -35,18 +37,15 @@ async def is_owner_slash(interaction):
 
 async def check_permissions(ctx, perms, *, check=all):
     """Checks if author has permissions to a permission"""
+
     if ctx.author.id in owners:
         return True
 
     resolved = ctx.channel.permissions_for(ctx.author)
-    return check(
-        getattr(resolved, name, None) == value for name, value in perms.items()
-    )
+    return check(getattr(resolved, name, None) == value for name, value in perms.items())
 
 
-async def slash_check_permissions(
-    interaction: discord.Interaction, perms, *, check=all
-):
+async def slash_check_permissions(interaction: discord.Interaction, perms, *, check=all):
     """Checks if author has permissions to a permission"""
 
     if interaction.user.id in owners:
@@ -136,6 +135,7 @@ def return_embed(
 
 async def slash_check_priv(interaction: discord.Interaction, member: discord.Member):
     """Custom (weird) way to check permissions when handling moderation commands"""
+
     embed = Embed(title="Permission Denied", color=0xFF0000, description="No lol.")
     embed2 = Embed(
         title="Permission Denied",
@@ -185,6 +185,7 @@ async def slash_check_priv(interaction: discord.Interaction, member: discord.Mem
 
 async def check_priv(ctx, member, ephemeral=bool):
     """Custom (weird) way to check permissions when handling moderation commands"""
+
     embed = Embed(title="Permission Denied", color=0xFF0000, description="No lol.")
     embed2 = Embed(
         title="Permission Denied",
@@ -234,31 +235,19 @@ async def check_priv(ctx, member, ephemeral=bool):
 
 
 def can_send(ctx):
-    return (
-        isinstance(ctx.channel, discord.DMChannel)
-        or ctx.channel.permissions_for(ctx.guild.me).send_messages
-    )
+    return isinstance(ctx.channel, discord.DMChannel) or ctx.channel.permissions_for(ctx.guild.me).send_messages
 
 
 def can_embed(ctx):
-    return (
-        isinstance(ctx.channel, discord.DMChannel)
-        or ctx.channel.permissions_for(ctx.guild.me).embed_links
-    )
+    return isinstance(ctx.channel, discord.DMChannel) or ctx.channel.permissions_for(ctx.guild.me).embed_links
 
 
 def can_upload(ctx):
-    return (
-        isinstance(ctx.channel, discord.DMChannel)
-        or ctx.channel.permissions_for(ctx.guild.me).attach_files
-    )
+    return isinstance(ctx.channel, discord.DMChannel) or ctx.channel.permissions_for(ctx.guild.me).attach_files
 
 
 def can_react(ctx):
-    return (
-        isinstance(ctx.channel, discord.DMChannel)
-        or ctx.channel.permissions_for(ctx.guild.me).add_reactions
-    )
+    return isinstance(ctx.channel, discord.DMChannel) or ctx.channel.permissions_for(ctx.guild.me).add_reactions
 
 
 def is_nsfw(ctx):
@@ -267,6 +256,5 @@ def is_nsfw(ctx):
 
 def can_handle(ctx, permission: str):
     """Checks if bot has permissions or is in DMs right now"""
-    return isinstance(ctx.channel, discord.DMChannel) or getattr(
-        ctx.channel.permissions_for(ctx.guild.me), permission
-    )
+
+    return isinstance(ctx.channel, discord.DMChannel) or getattr(ctx.channel.permissions_for(ctx.guild.me), permission)

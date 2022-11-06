@@ -3,16 +3,14 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-import platform
 import re
-import urllib.parse
-import xml.etree.ElementTree as ET
-from datetime import datetime
-from io import BytesIO
-from typing import TYPE_CHECKING, List, Union
-
 import aiohttp
+import urllib.parse
+from io import BytesIO
+from typing import List, TYPE_CHECKING, Union
+
 import discord
+from defusedxml.ElementTree import parse
 from discord import app_commands
 from discord.ext import commands
 from index import Website, colors, config
@@ -21,8 +19,107 @@ from sentry_sdk import capture_exception
 from utils import default, imports, permissions
 from utils.embeds import EmbedMaker as Embed
 
+
 if TYPE_CHECKING:
-    from index import Bot
+    from index import AGB
+
+
+class UserinfoPermissionView(discord.ui.View):
+    def __init__(
+        self,
+        ctx: commands.Context,
+        user: Union[discord.Member, discord.User],
+        initial_embed: discord.Embed,
+        message: discord.Message,
+        db_user,
+    ):
+        super().__init__(timeout=120)
+        self.ctx = ctx
+        self.user = user
+        self.initial_embed = initial_embed
+        self.message = message
+        self.db_user = db_user
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id == self.ctx.author.id:
+            return True
+        await interaction.response.send_message("This isn't your command!", ephemeral=True)
+        return False
+
+    async def on_timeout(self):
+        for child in self.children:
+            child.disabled = True
+        await self.message.edit(view=self)
+
+    @discord.ui.button(
+        label="Permissions",
+        custom_id="user_permissions",
+        style=discord.ButtonStyle.blurple,
+    )
+    async def user_perm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.user_perm.disabled = True
+        self.agb_user_stats.disabled = False
+        self.user_info.disabled = False
+        try:
+            perms = ", ".join(
+                [
+                    f"`{p}`".replace("_", " ")
+                    for p, value in self.user.guild_permissions
+                    if (value and isinstance(self.user, discord.Member)) is True
+                ]
+            )
+        except Exception:
+            perms = "`None` (Probably not in the current server)."
+        embed = Embed(thumbnail=None)
+        if "administrator" in perms:
+            perms = "`Administrator` (All permissions)"
+        embed.add_field(name="Permissions", value=perms)
+        await interaction.response.edit_message(content=None, embed=embed, view=self)
+
+    @discord.ui.button(
+        label="AGB User Stats",
+        custom_id="agb_user_stats",
+        style=discord.ButtonStyle.blurple,
+    )
+    async def agb_user_stats(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.user_perm.disabled = False
+        self.agb_user_stats.disabled = True
+        self.user_info.disabled = False
+
+        used_cmds = ""
+        if self.db_user.used_commands is None:
+            used_cmds = "None"
+        else:
+            used_cmds = f"{self.db_user.used_commands}"
+        embed = Embed(title="AGB User Stats")
+        embed.add_field(
+            name="Commands Used",
+            value=used_cmds,
+            inline=False,
+        )
+        embed.add_field(
+            name="Is Owner/Bot Admin?",
+            value=f"{'Yes' if self.user.id in imports.config()['owners'] else 'No'}",
+            inline=False,
+        )
+        embed.add_field(
+            name="Is Blacklisted?",
+            value=f"{'Yes' if self.db_user.blacklisted == 'true' else 'No'}",
+            inline=False,
+        )
+        await interaction.response.edit_message(content=None, embed=embed, view=self)
+
+    @discord.ui.button(
+        label="Back",
+        custom_id="user_information",
+        style=discord.ButtonStyle.blurple,
+        disabled=True,
+    )
+    async def user_info(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.user_perm.disabled = False
+        self.agb_user_stats.disabled = False
+        self.user_info.disabled = True
+        await interaction.response.edit_message(content=None, embed=self.initial_embed, view=self)
 
 
 class Creamy(commands.RoleConverter):
@@ -33,22 +130,16 @@ class Creamy(commands.RoleConverter):
 class DiscordCmds(commands.Cog, name="discord"):
     """Server related things :D"""
 
-    def __init__(self, bot: Bot):
-        self.bot: Bot = bot
+    def __init__(self, bot: AGB):
+        self.bot: AGB = bot
         self.config = imports.get("config.json")
         self.bot.sniped_messages = {}
-        self.session = aiohttp.ClientSession()
         self.bot.edit_sniped_messages = {}
         self.halloween_re = re.compile(r"h(a|4)(l|1)(l|1)(o|0)w(e|3)(e|3)n", re.I)
         self.spooky_re = re.compile(r"(s|5)(p|7)(o|0)(o|0)(k|9)(y|1)", re.I)
         self.nword_re = r"\b(n|m|и|й){1,32}(i|1|l|!|ᴉ|¡){1,32}((g|ƃ|6|б{2,32}|q){1,32}|[gqgƃ6б]{2,32})(a|e|3|з|u)(r|Я|s|5|$){1,32}\b"
         self.nword_re_comp = re.compile(self.nword_re, re.IGNORECASE | re.UNICODE)
-        self.message_cooldown = commands.CooldownMapping.from_cooldown(
-            1.0, 3.0, commands.BucketType.user
-        )
-
-    async def cog_unload(self):
-        self.bot.loop.create_task(self.session.close())
+        self.message_cooldown = commands.CooldownMapping.from_cooldown(1.0, 3.0, commands.BucketType.user)
 
     class MemberConverter(commands.MemberConverter):
         async def convert(self, ctx, argument):
@@ -56,86 +147,18 @@ class DiscordCmds(commands.Cog, name="discord"):
                 return await super().convert(ctx, argument)
             except commands.BadArgument as e:
                 members = [
-                    member
-                    for member in ctx.guild.members
-                    if member.display_name.lower().startswith(argument.lower())
+                    member for member in ctx.guild.members if member.display_name.lower().startswith(argument.lower())
                 ]
                 if len(members) == 1:
                     return members[0]
-                raise commands.BadArgument(
-                    f"{len(members)} members found, please be more specific."
-                ) from e
+                raise commands.BadArgument(f"{len(members)} members found, please be more specific.") from e
 
-    @commands.Cog.listener(name="on_message")
-    async def spooky(self, message):
-        bucket = self.message_cooldown.get_bucket(message)
-        retry_after = bucket.update_rate_limit()
-        if datetime.now().month == 10:  # and datetime.today().day == 31:
-            BotList_Servers = [
-                336642139381301249,
-                716445624517656727,
-                523523486719803403,
-                658262945234681856,
-                608711879858192479,
-                446425626988249089,
-                387812458661937152,
-                414429834689773578,
-                645281161949741064,
-                527862771014959134,
-                733135938347073576,
-                766993740463603712,
-                724571620676599838,
-                568567800910839811,
-                641574644578648068,
-                532372609476591626,
-                374071874222686211,
-                789934742128558080,
-                694140006138118144,
-                743348125191897098,
-                110373943822540800,
-                491039338659053568,
-                891226286347923506,
-            ]
-            if self.halloween_re.search(message.content.lower()):
-                if retry_after:
-                    return
-                if message.guild.id in BotList_Servers:
-                    return
-                with contextlib.suppress(Exception):
-                    await message.add_reaction("🎃")
-                    await asyncio.sleep(1)
-            if self.spooky_re.search(message.content.lower()):
-                if retry_after:
-                    return
-                if message.guild.id in BotList_Servers:
-                    return
-                with contextlib.suppress(Exception):
-                    await message.add_reaction("👻")
-                    await asyncio.sleep(1)
+    async def get_or_fetch_user(self, user_id: int):
+        user = self.bot.get_user(user_id)
+        if user is None:
+            user = await self.bot.fetch_user(user_id)
 
-    @commands.hybrid_command(aliases=["s"])
-    @commands.guild_only()
-    @commands.bot_has_permissions(embed_links=True)
-    @permissions.dynamic_ownerbypass_cooldown(1, 3, commands.BucketType.user)
-    async def snipe(self, ctx):
-        """Snipe recently deleted messages to see what someone said."""
-        await ctx.send(
-            embed=Embed(
-                title="Snipe is no more", description="Snipe is no longer available"
-            )
-        )
-
-    @commands.hybrid_command(aliases=["es"])
-    @commands.bot_has_permissions(embed_links=True)
-    @permissions.dynamic_ownerbypass_cooldown(1, 3, commands.BucketType.user)
-    async def editsnipe(self, ctx):
-        """Snipe edited messages to see what the message said before."""
-        await ctx.send(
-            embed=Embed(
-                title="Edit Snipe is no more",
-                description="Edit Snipe is no longer available",
-            )
-        )
+        return user
 
     @commands.hybrid_command()
     @commands.guild_only()
@@ -162,10 +185,7 @@ class DiscordCmds(commands.Cog, name="discord"):
         else:
             #  `:{emoji.name}:` <- looks ugly
             text = "\n".join(
-                [
-                    f"{emoji} (`<{'a' if emoji.animated else ''}:{emoji.name}:{emoji.id}>`)"
-                    for emoji in ctx.guild.emojis
-                ]
+                [f"{emoji} (`<{'a' if emoji.animated else ''}:{emoji.name}:{emoji.id}>`)" for emoji in ctx.guild.emojis]
             )
             if len(text) > 3900:
                 text = f"{text[:3900]}..."
@@ -192,9 +212,7 @@ class DiscordCmds(commands.Cog, name="discord"):
             ephemeral (optional): make the command visible to you or others. Defaults to False.
         """
         user = user or ctx.author
-        embed = Embed(
-            title="User Icon", colour=colors.prim, description=f"{user}'s avatar is:"
-        )
+        embed = Embed(title="User Icon", colour=colors.prim, description=f"{user}'s avatar is:")
         embed.set_image(url=user.avatar)
         await ctx.send(embed=embed, ephemeral=ephemeral)
 
@@ -251,8 +269,7 @@ class DiscordCmds(commands.Cog, name="discord"):
                 mods.append(member)
         if mods:
             mod_list = "".join(
-                f"[{num}] {mod.name}#{mod.discriminator} [{mod.id}]\n"
-                for num, mod in enumerate(mods, start=1)
+                f"[{num}] {mod.name}#{mod.discriminator} [{mod.id}]\n" for num, mod in enumerate(mods, start=1)
             )
 
             await ctx.send(f"\n{default.pycode(mod_list)}")
@@ -286,28 +303,27 @@ class DiscordCmds(commands.Cog, name="discord"):
         yes = await ctx.send("Fetching info...")
         embed = Embed(
             title=f"Stats for **{channel.name}**",
-            description=f"{f'Category: {channel.category.name}' if channel.category else 'This channel is not in a category'}",
             color=colors.prim,
         )
 
         embed.add_field(name="Channel Guild", value=ctx.guild.name)
+        embed.add_field(
+            name="Category",
+            value=f"{f'Category: {channel.category.name}' if channel.category else 'This channel is not in a category'}",
+        )
         embed.add_field(name="Channel Id", value=channel.id)
         embed.add_field(name="Channel Topic", value=f"{channel.topic or 'No topic.'}")
         embed.add_field(name="Channel Position", value=channel.position)
-        embed.add_field(
-            name="Amount of pinned messages?", value=(len(await channel.pins()))
-        )
+        embed.add_field(name="Amount of pinned messages?", value=(len(await channel.pins())))
         embed.add_field(name="Channel Slowmode Delay", value=channel.slowmode_delay)
         embed.add_field(name="Channel is nsfw?", value=channel.is_nsfw())
         embed.add_field(name="Channel is news?", value=channel.is_news())
         embed.add_field(
             name="Channel Creation Time",
-            value=f"{channel.created_at:%x\n%b %d (%a), %Y - %H:%M:%S}",
+            value=f"{discord.utils.format_dt(channel.created_at, style='F')}",
         )
-        embed.add_field(
-            name="Channel Permissions Synced", value=channel.permissions_synced
-        )
-        embed.add_field(name="Channel Hash", value=hash(channel))
+        embed.add_field(name="Channel Permissions Synced", value=channel.permissions_synced)
+        embed.add_field(name="Channel Hash", value=hash(channel), inline=True)
         await yes.edit(
             content=None,
             embed=embed,
@@ -451,19 +467,13 @@ You can give yourself the colors by doing `/colorme <color>`. \nExample: `/color
                 ).send(ctx)
 
     @colorme.autocomplete(name="role")
-    async def colorme_autocomplete(
-        self, interaction, role: str
-    ) -> List[app_commands.Choice[str]]:
+    async def colorme_autocomplete(self, interaction, role: str) -> List[app_commands.Choice[str]]:
         """Autocomplete for the colorme command"""
         with open("colors.json", "r") as f:
             data = json.load(f)
             # iterate through the json file and list all the color roles
             colors = list(data)
-            return [
-                app_commands.Choice(name=x, value=x)
-                for x in colors
-                if x.startswith(role)
-            ]
+            return [app_commands.Choice(name=x, value=x) for x in colors if x.startswith(role)]
 
     @permissions.dynamic_ownerbypass_cooldown(1, 3, commands.BucketType.user)
     @commands.hybrid_command()
@@ -472,9 +482,7 @@ You can give yourself the colors by doing `/colorme <color>`. \nExample: `/color
     async def icon(self, ctx):
         """Get the current server icon"""
         if not ctx.guild.icon:
-            return await Embed(
-                description="This server does not have a icon...", thumbnail=None
-            ).send(ctx)
+            return await Embed(description="This server does not have a icon...", thumbnail=None).send(ctx)
         await Embed(
             title="Server Icon",
             description=f"{ctx.guild.name}'s icon is:",
@@ -488,12 +496,8 @@ You can give yourself the colors by doing `/colorme <color>`. \nExample: `/color
     async def banner(self, ctx):
         """Get the current banner image"""
         if not ctx.guild.banner:
-            return await Embed(
-                description="This server does not have a banner...", thumbnail=None
-            ).send(ctx)
-        await Embed(
-            description=f"{ctx.guild.name}'s banner", image=ctx.guild.banner.url
-        ).send(ctx)
+            return await Embed(description="This server does not have a banner...", thumbnail=None).send(ctx)
+        await Embed(description=f"{ctx.guild.name}'s banner", image=ctx.guild.banner.url).send(ctx)
 
     @permissions.dynamic_ownerbypass_cooldown(1, 3, commands.BucketType.user)
     @commands.hybrid_command()
@@ -501,22 +505,14 @@ You can give yourself the colors by doing `/colorme <color>`. \nExample: `/color
     @commands.guild_only()
     async def roleinfo(self, ctx, *, role: discord.Role):
         """Get information about a role"""
-        list_members_with_the_role = [
-            member.mention for member in ctx.guild.members if role in member.roles
-        ]
+        list_members_with_the_role = [member.mention for member in ctx.guild.members if role in member.roles]
         if not list_members_with_the_role:
             list_members_with_the_role = "None"
         if len(list_members_with_the_role) > 40:
             list_members_with_the_role = "Too many members to list"
         else:
             list_members_with_the_role = ", ".join(list_members_with_the_role)
-        perms = ", ".join(
-            [
-                f"{p.capitalize()}".replace("_", " ")
-                for p, value in role.permissions
-                if value is True
-            ]
-        )
+        perms = ", ".join([f"{p.capitalize()}".replace("_", " ") for p, value in role.permissions if value is True])
         if "administrator" in perms:
             perms = "All of them lol"
         embed = Embed(title=f"**{role.name}**", color=role.colour)
@@ -529,9 +525,7 @@ You can give yourself the colors by doing `/colorme <color>`. \nExample: `/color
         embed.add_field(name="Members", value=f"{len(role.members)}", inline=True)
         embed.add_field(name="Who all has this role", value=list_members_with_the_role)
         if int(role.permissions.value) == 0:
-            embed.add_field(
-                name="Permissions", value="No permissions granted.", inline=False
-            )
+            embed.add_field(name="Permissions", value="No permissions granted.", inline=False)
         else:
             embed.add_field(name="Permissions", value=f"{perms}", inline=False)
         embed.add_field(name="Mentionable", value=role.mentionable, inline=True)
@@ -591,9 +585,7 @@ You can give yourself the colors by doing `/colorme <color>`. \nExample: `/color
         """Mass removes a role from everyone in the server (Doesn't ignore bots)"""
         removed = 0
         if role.is_default():
-            await Embed(description="Cant remove a default role from all users!").send(
-                ctx
-            )
+            await Embed(description="Cant remove a default role from all users!").send(ctx)
         if role.position > ctx.author.top_role.position:
             await Embed(
                 description="You cant remove a role that is higher than your top role!",
@@ -624,9 +616,7 @@ You can give yourself the colors by doing `/colorme <color>`. \nExample: `/color
             try:
                 await guild.chunk()
             except discord.ClientException:
-                await ctx.send(
-                    "Failed to gather information on the server. Make sure I'm in the server."
-                )
+                await ctx.send("Failed to gather information on the server. Make sure I'm in the server.")
                 return await fetching.delete()
 
         await asyncio.sleep(1)
@@ -643,9 +633,7 @@ You can give yourself the colors by doing `/colorme <color>`. \nExample: `/color
 
         embed.add_field(name="Server Name", value=f"`{guild.name}`", inline=True)
         embed.add_field(name="Server ID", value=f"`{guild.id}`", inline=True)
-        embed.add_field(
-            name="Bots", value=f"`{len([bot for bot in guild.members if bot.bot])}`"
-        )
+        embed.add_field(name="Bots", value=f"`{len([bot for bot in guild.members if bot.bot])}`")
         if len(guild.text_channels) == 69:
             embed.add_field(
                 name="Text channels",
@@ -663,20 +651,14 @@ You can give yourself the colors by doing `/colorme <color>`. \nExample: `/color
             value=f"`{len(guild.voice_channels)}`",
             inline=True,
         )
-        embed.add_field(
-            name="Server on shard", value=f"`{guild.shard_id}`", inline=True
-        )
+        embed.add_field(name="Server on shard", value=f"`{guild.shard_id}`", inline=True)
         embed.add_field(name="Members", value=f"`{guild.member_count}`", inline=True)
         if len(guild.roles) == 69:
-            embed.add_field(
-                name="Roles", value=(f"`{len(guild.roles)}` Nice"), inline=True
-            )
+            embed.add_field(name="Roles", value=(f"`{len(guild.roles)}` Nice"), inline=True)
         else:
             embed.add_field(name="Roles", value=(f"`{len(guild.roles)}`"), inline=True)
         embed.add_field(name="Emoji Count", value=f"`{len(guild.emojis)}`", inline=True)
-        embed.add_field(
-            name="Emoji Limit", value=f"`{guild.emoji_limit}` Emojis", inline=True
-        )
+        embed.add_field(name="Emoji Limit", value=f"`{guild.emoji_limit}` Emojis", inline=True)
         embed.add_field(
             name="Filesize Limit",
             value=f"`{str(default.bytesto(guild.filesize_limit, 'm'))}` mb",
@@ -699,7 +681,7 @@ You can give yourself the colors by doing `/colorme <color>`. \nExample: `/color
         except Exception:
             embed.add_field(
                 name="Owner/ID",
-                value=f"**Name**:`Unable to fetch.`\n**ID**:`Unable to fetch.`",
+                value="**Name**:`Unable to fetch.`\n**ID**:`Unable to fetch.`",
                 inline=False,
             )
         time_guild_existed = discord.utils.utcnow() - guild.created_at
@@ -721,201 +703,78 @@ You can give yourself the colors by doing `/colorme <color>`. \nExample: `/color
     async def userinfo(
         self,
         ctx,
-        user: Union[discord.User, discord.Member] = None,
+        user: Union[discord.Member, discord.User] = None,
         ephemeral: bool = False,
     ):
-        """Get user info on anyone in Discord"""
+        """Gather information about a user"""
         await ctx.typing(ephemeral=ephemeral)
+        fetching = await ctx.send("Fetching info...", ephemeral=ephemeral)
         user = user or ctx.author
-        if user.bot:
-            return await ctx.send(
-                "Bots don't have any *useful* information!", ephemeral=True
-            )
-        chunked = [guild for guild in self.bot.guilds if guild.chunked]
-        db_user = await self.bot.db.fetch_blacklist(user.id)
-        discord_version = discord.__version__
-        python_version = platform.python_version()
+        if ctx.guild and not ctx.guild.chunked:
+            await ctx.guild.chunk()
+
         banner = await self.bot.fetch_user(user.id)
-        embed = Embed()
-        embed.title = f"{self.bot.user.name}"
-        embed.description = f"[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate}) "
-        embed.url = f"{Website}"
-        embed.add_field(
-            name="User",
-            value=f"`{user}` | Blacklisted: `{db_user.is_blacklisted}`",
-            inline=True,
-        )
+        nickname = ""
+        joined_at = ""
+        top_role = ""
+        color = ""
+        mutuals = ""
+        member_position = ""
+        chunked = [guild for guild in self.bot.guilds if guild.chunked]
+        if isinstance(user, discord.Member):
+            joined_at = f"Joined: `{default.commify((discord.utils.utcnow() - user.joined_at).days)}` days ago or {discord.utils.format_dt(user.joined_at, style='R')}"
+            nickname = f"\nNickname: `{user.nick}`" if user.nick else ""
+            top_role = f"\nTop Role: `{user.top_role}`"
+            color = f"\nColor: `{user.color}`"
+            member_position = (
+                f"\nJoin Position: `{sorted(ctx.guild.members, key=lambda m: m.joined_at).index(user) + 1 }`"
+                if ctx.guild.get_member(user.id)
+                else ""
+            )
+        db_user = await self.bot.db.fetch_user(user.id)
+        if not db_user:
+            db_user = await self.bot.db.add_user(user.id)
+        try:
+            if len(chunked) == len(self.bot.guilds):
+                mutuals = f"\nMutual Servers: `{len(self.bot.guilds)} server(s)`"
+            else:
+                mutuals = f"\nMutual Servers: `{len(user.mutual_guilds)} server(s)`"
+        except Exception:
+            mutuals = "`Could not display at this time.`"
+        bot = f"\nBot: `{user.bot}`"
+        created = f"\nCreated: `{(discord.utils.utcnow() - user.created_at).days}` days ago or {discord.utils.format_dt(user.created_at, style='R')}{mutuals}"
+        embed = Embed(thumbnail=user.display_avatar.url)
         with contextlib.suppress(Exception):
             embed.set_image(url=banner.banner)
-        if isinstance(user, discord.Member) and user.nick is not None:
-            embed.add_field(name="Nickname", value=f"`{user.nick}`", inline=True)
-        # create a unix timestamp for the user's account creation
-        embed.add_field(
-            name="Account created",
-            # show how long the user joined ago in years and round to 2 decimal places
-            value=f"`{user.created_at:%x\n%b %d (%a), %Y - %H:%M:%S}`\nThat was `{(discord.utils.utcnow() - user.created_at).days}` days ago or {discord.utils.format_dt(user.created_at, style='R')}",
-            inline=False,
+        embed.add_field(name="Information", value=f"Name: `{user}`{nickname}{bot}{created}")
+        if joined_at and top_role and member_position and color:
+            embed.add_field(
+                name="Server related",
+                value=f"{joined_at}{top_role}{member_position}{color}",
+            )
+        embed.description = f"{user.mention} | {user.id}"
+        view = UserinfoPermissionView(
+            ctx,
+            user=user,
+            initial_embed=embed,
+            message=fetching,
+            db_user=db_user,
         )
-        if len(chunked) == len(self.bot.guilds):
-            embed.add_field(
-                name="Mutual Servers",
-                value=f"`{len(user.mutual_guilds)} Servers`",
-                inline=False,
-            )
-        elif len(user.mutual_guilds) == 1:
-            embed.add_field(name="Mutual Servers", value="`1 Server`", inline=True)
-        else:
-            embed.add_field(
-                name="Mutual Servers",
-                value=f"`{len(user.mutual_guilds)} Servers`\n`(Can be innacurate, requires all servers to be cached)`",
-                inline=True,
-            )
-
-        embed.set_thumbnail(url=user.avatar)
-        if isinstance(user, discord.Member):
-            perms = ", ".join(
-                [
-                    f"{p}".replace("_", " ")
-                    for p, value in user.guild_permissions
-                    if value is True
-                ]
-            )
-            if "administrator" in perms:
-                perms = "Administrator (All permissions)"
-            embed.colour = user.color
-            embed.add_field(
-                name="Joined Server",
-                value=f"`{user.joined_at:%b %d, %Y - %H:%M:%S}`\nThat was `{default.commify((discord.utils.utcnow() - user.joined_at).days)}` days ago or {discord.utils.format_dt(user.joined_at, style='R')}",
-                inline=False,
-            )
-
-            roles = [x.name for x in user.roles if x.name != "@everyone"]
-            if len(user.roles) > 20:
-                roles = roles[:20]
-                print(roles)
-                roles.append("...")
-                embed.add_field(
-                    name=f"Roles[{len(roles)}]",
-                    value=f"{', '.join(roles)}",
-                    inline=True,
-                )
-            embed.add_field(name="Permissions", value=perms)
-        embed.set_footer(
-            text=f"mc.lunardev.group 1.19.2 | Discord.py {discord_version} | Python {python_version}"
-        )
-        await ctx.send(
-            content=f"Basic info about **`{user.id} / {user.name}`**",
+        await fetching.edit(
+            content=None,
             embed=embed,
-            ephemeral=ephemeral,
+            allowed_mentions=discord.AllowedMentions(users=False),
+            view=view,
         )
 
-    @permissions.dynamic_ownerbypass_cooldown(1, 5, commands.BucketType.user)
-    @commands.hybrid_group(case_insensitive=True)
-    @commands.guild_only()
-    async def wolfram(self, ctx):
-        """Interactively calculate things with Wolfram Alpha."""
-        if ctx.invoked_subcommand is None:
-            await ctx.send_help(str(ctx.command))
-            return
 
-    @wolfram.command()
-    @permissions.dynamic_ownerbypass_cooldown(1, 3, commands.BucketType.user)
-    async def ask(self, ctx, *, question: str):
-        """Ask a general question"""
-        await ctx.typing(ephemeral=True)
-        api_key = config.WolframAlpha
-        url = "http://api.wolframalpha.com/v2/query?"
-        query = question
-        payload = {"input": query, "appid": api_key}
-        headers = {"user-agent": "AGB"}
-        async with self.session.get(url, params=payload, headers=headers) as r:
-            result = await r.text()
-        root = ET.fromstring(result)
-        if a := [
-            pt.text.capitalize() for pt in root.findall(".//plaintext") if pt.text
-        ]:
-            message = "\n".join(a[:3])
-            if "Current geoip location" in message:
-                message = "Wolfram|Alpha did not understand your input"
+# LD Media Only Channel
 
-        else:
-            message = "Wolfram|Alpha did not understand your input"
-        await Embed(description=message).send(ctx)
-
-    @wolfram.command()
-    @permissions.dynamic_ownerbypass_cooldown(1, 3, commands.BucketType.user)
-    async def image(self, ctx, *, thing: str):
-        """Get an image from wolfram Alpha"""
-        await ctx.typing(ephemeral=True)
-        api_key = config.WolframAlpha
-        if not api_key:
-            await Embed(
-                description="No API key set for Wolfram Alpha. Get one at http://products.wolframalpha.com/api/",
-                thumbnail=None,
-            ).send(ctx)
-        width = 500
-        font_size = 15
-        layout = "divider"
-        background = "193555"
-        foreground = "white"
-        units = "metric"
-        query = " ".join(thing)
-        query = urllib.parse.quote(query)
-        url = f"http://api.wolframalpha.com/v1/simple?appid={api_key}&i={query}%3F&width={width}&fontsize={font_size}&layout={layout}&background={background}&foreground={foreground}&units={units}&ip=127.0.0.1"
-
-        async with self.session.request("GET", url) as r:
-            img = await r.content.read()
-            if len(img) == 43:
-                await Embed(
-                    description="Wolfram|Alpha did not understand your input",
-                    thumbnail=None,
-                ).send(ctx)
-            wolfram_img = BytesIO(img)
-            try:
-                await ctx.send(
-                    file=discord.File(wolfram_img, f"wolfram{ctx.author.id}.gif")
-                )
-            except Exception as e:
-                capture_exception(e)
-                await Embed(description=f"Oops, there was a problem: {e}").send(ctx)
-
-    @wolfram.command()
-    @permissions.dynamic_ownerbypass_cooldown(1, 3, commands.BucketType.user)
-    async def solve(self, ctx, *, mathquestion: str):
-        """Solve any math problem"""
-        await ctx.typing(ephemeral=True)
-        api_key = config.WolframAlpha
-        url = "http://api.wolframalpha.com/v2/query"
-        params = {
-            "appid": api_key,
-            "input": mathquestion,
-            "podstate": "Step-by-step solution",
-            "format": "plaintext",
-        }
-        msg = ""
-        async with self.session.request("GET", url, params=params) as r:
-            text = await r.content.read()
-            root = ET.fromstring(text)
-            for pod in root.findall(".//pod"):
-                if pod.attrib["title"] == "Number line":
-                    continue
-                msg += f"{pod.attrib['title']}\n"
-                for pt in pod.findall(".//plaintext"):
-                    if pt.text:
-                        strip = pt.text.replace(" | ", " ").replace("| ", " ")
-                        msg += f"- {strip}\n\n"
-            if len(msg) < 1:
-                msg = "Wolfram|Alpha did not understand your input"
-            for text in default.pagify(msg):
-                await Embed(description=text).send(ctx)
-
-    # LD Media Only Channel
-
-    @commands.Cog.listener(name="on_message")
-    async def onlymedia(self, message):
-        if message.channel.id in [986082876640591952] and not message.attachments:
-            await message.delete()
+# @commands.Cog.listener(name="on_message")
+# async def onlymedia(self, message):
+#     if message.channel.id in [986082876640591952] and not message.attachments:
+#         await message.delete()
 
 
-async def setup(bot: Bot) -> None:
+async def setup(bot: AGB) -> None:
     await bot.add_cog(DiscordCmds(bot))

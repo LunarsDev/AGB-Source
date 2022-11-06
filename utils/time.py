@@ -70,9 +70,7 @@ class HumanTime:
         now = now or datetime.datetime.now(datetime.timezone.utc)
         dt, status = self.calendar.parseDT(argument, sourceTime=now)
         if not status.hasDateOrTime:
-            raise commands.BadArgument(
-                'invalid time provided, try e.g. "tomorrow" or "3 days"'
-            )
+            raise commands.BadArgument('invalid time provided, try e.g. "tomorrow" or "3 days"')
 
         if not status.hasTime:
             # replace it with the current time
@@ -172,9 +170,7 @@ class UserFriendlyTime(commands.Converter):
 
             elements = calendar.nlp(argument, sourceTime=now)
             if elements is None or len(elements) == 0:
-                raise commands.BadArgument(
-                    'Invalid time provided, try e.g. "tomorrow" or "3 days".'
-                )
+                raise commands.BadArgument('Invalid time provided, try e.g. "tomorrow" or "3 days".')
 
             # handle the following cases:
             # "date time" foo
@@ -185,9 +181,7 @@ class UserFriendlyTime(commands.Converter):
             dt, status, begin, end, dt_string = elements[0]
 
             if not status.hasDateOrTime:
-                raise commands.BadArgument(
-                    'Invalid time provided, try e.g. "tomorrow" or "3 days".'
-                )
+                raise commands.BadArgument('Invalid time provided, try e.g. "tomorrow" or "3 days".')
 
             if begin not in (0, 1) and end != len(argument):
                 raise commands.BadArgument(
@@ -215,14 +209,10 @@ class UserFriendlyTime(commands.Converter):
                 if begin == 1:
                     # check if it's quoted:
                     if argument[0] != '"':
-                        raise commands.BadArgument(
-                            "Expected quote before time input..."
-                        )
+                        raise commands.BadArgument("Expected quote before time input...")
 
                     if end >= len(argument) or argument[end] != '"':
-                        raise commands.BadArgument(
-                            "If the time is quoted, you must unquote it."
-                        )
+                        raise commands.BadArgument("If the time is quoted, you must unquote it.")
 
                     remaining = argument[end + 1 :].lstrip(" ,.!")
                 else:
@@ -292,9 +282,4 @@ def human_timedelta(dt, *, source=None, accuracy=3, brief=False, suffix=True):
 
     if len(output) == 0:
         return "now"
-    else:
-        return (
-            " ".join(output) + suffix
-            if brief
-            else human_join(output, final="and") + suffix
-        )
+    return " ".join(output) + suffix if brief else human_join(output, final="and") + suffix

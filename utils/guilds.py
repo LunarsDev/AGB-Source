@@ -9,7 +9,6 @@ class Guilds:
 
     def __call__(self, ctx):
         """Allows the instance of this class to be called and return a guild."""
-
         id = ctx.guild.id  # get the id of the guild of the given context
         guild = self.guilds.get(id)  # get the 'Guild' object of a given id
 
@@ -36,11 +35,13 @@ class Queue:
 
     def __getitem__(self, index):
         """Allows indexing to the object itself to get an item in the queue."""
+
         return self.queue[index]
 
     @property
     def current(self):
         """Get and return the first item in queue."""
+
         try:
             return self[0]
         except IndexError:
@@ -48,20 +49,25 @@ class Queue:
 
     def pop(self, index):
         """Remove an item in queue by index."""
+
         return self.queue.pop(index)
 
     def clear(self):
         """Reset the queue."""
+
         self.queue.clear()
 
     def enqueue(self, obj):
         """Enqueue an item in the right side of the queue."""
+
         self.queue.append(obj)
 
     def dequeue(self):
         """Dequeue an item in the left side of the queue."""
+
         return self.pop(0)
 
     def shift(self, n):
         """Shift the queue by 'n' times."""
+
         self.queue = self.queue[n:] + self.queue[:n]

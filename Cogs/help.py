@@ -8,12 +8,12 @@ from Manager.emoji import Emoji
 from utils.embeds import EmbedMaker as Embed
 
 if TYPE_CHECKING:
-    from index import Bot
+    from index import AGB
 
 
 class Help(commands.Cog):
-    def __init__(self, bot: Bot):
-        self.bot: Bot = bot
+    def __init__(self, bot: AGB):
+        self.bot: AGB = bot
         bot.help_command = FormattedHelp()
         self.bot._original_help_command = bot.help_command
 
@@ -33,28 +33,21 @@ class HelpMenu(menus.ListPageSource):
     def __init__(self, data, per_page):
         super().__init__(data, per_page=per_page)
 
-    @staticmethod
-    async def format_page(menu, entries):
+    async def format_page(self, menu, entries):
         return entries
 
 
 class FormattedHelp(commands.HelpCommand):
     def __init__(self):
-        super().__init__(
-            command_attrs={
-                "usage": "`/help (command/category)`", "hidden": True}
-        )
+        super().__init__(command_attrs={"usage": "`/help (command/category)`", "hidden": True})
 
-    @staticmethod
     async def cog_check(ctx):
         """A local check which applies to all commands in this cog."""
         if not ctx.guild:
             return await ctx.send("This command can only be used in a server.")
 
     def get_command_signature(self, command):
-        return (
-            f"{self.context.clean_prefix}{command.qualified_name} {command.signature}"
-        )
+        return f"{self.context.clean_prefix}{command.qualified_name} {command.signature}"
 
     def rem_lead_space(self, strict=False):
         if self and not strict and self[0] == "\n":
@@ -67,7 +60,7 @@ class FormattedHelp(commands.HelpCommand):
                     if c != " ":
                         break
                 max_spaces = idx + 1
-        return "".join([l if l == "\n" else l[max_spaces - 1:] for l in lines])
+        return "".join([l if l == "\n" else l[max_spaces - 1 :] for l in lines])
 
     async def send_command_help(self, command):
         e = Embed(
@@ -75,9 +68,7 @@ class FormattedHelp(commands.HelpCommand):
             description=f"{command.help}\n[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate}) ",
             color=colors.prim,
         )
-        e.add_field(
-            name="Usage", value=self.get_command_signature(command).replace("*", "")
-        )
+        e.add_field(name="Usage", value=self.get_command_signature(command).replace("*", ""))
         e.set_footer(
             text=f"mc.lunardev.group 1.19.2 | {self.context.bot.user.name} by Motzumoto, iPlay G, WinterFe, and Soheab"
         )
@@ -100,9 +91,7 @@ class FormattedHelp(commands.HelpCommand):
                 description=f"{command.help}\n[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate}) ",
                 color=colors.prim,
             )
-            e.add_field(
-                name="Usage", value=self.get_command_signature(command).replace("*", "")
-            )
+            e.add_field(name="Usage", value=self.get_command_signature(command).replace("*", ""))
             e.set_footer(
                 text=f"mc.lunardev.group 1.19.2 | {self.context.bot.user.name} by Motzumoto, iPlay G, WinterFe, and Soheab"
             )
@@ -134,8 +123,7 @@ class FormattedHelp(commands.HelpCommand):
                     name="Usage",
                     value=self.get_command_signature(command).replace("*", ""),
                 )
-                e.add_field(name="Support Server",
-                            value=f"[Click Me]({config.Server})")
+                e.add_field(name="Support Server", value=f"[Click Me]({config.Server})")
             e.set_footer(
                 text=f"mc.lunardev.group 1.19.2 | {self.context.bot.user.name} by Motzumoto, iPlay G, WinterFe, and Soheab"
             )
@@ -150,9 +138,7 @@ class FormattedHelp(commands.HelpCommand):
             await self.get_destination().send(fuck_off)
             return
         nsfw_channels = (
-            ", ".join(
-                [c.mention for c in self.context.guild.text_channels if c.is_nsfw()]
-            )
+            ", ".join([c.mention for c in self.context.guild.text_channels if c.is_nsfw()])
             or "No NSFW channels found. Make one to be able to use these commands."
         )
         async with self.context.typing():
@@ -183,24 +169,24 @@ class FormattedHelp(commands.HelpCommand):
 
             if self.context.channel.is_nsfw():
                 description = f"""For help on individual commands, use `/help <command>`.\n\n**{await Emoji.rand_rainbow()} {info_cog.qualified_name.capitalize()}**\n{info_names}\n\n**{await Emoji.rand_rainbow()} {fun_cog.qualified_name.capitalize()}**\n{fun_names}\n\n**{await Emoji.rand_rainbow()} {guild_cog.qualified_name.capitalize()}**
-				{guild_names}\n\n**{await Emoji.rand_rainbow()} {mod_cog.qualified_name.capitalize()}**\n{mod_names}\n\n{await Emoji.rand_rainbow()} **{nsfw_cog.qualified_name.capitalize()}**\n{nsfw_names}\nalso, there are nsfw slash commands. make sure AGB has permission to register them in your server."""
+				{guild_names}\n\n**{await Emoji.rand_rainbow()} {mod_cog.qualified_name.capitalize()}**\n{mod_names}\n\n**{await Emoji.rand_rainbow()} **{nsfw_cog.qualified_name.capitalize()}**\n{nsfw_names}\nalso, there are nsfw slash commands. make sure AGB has permission to register them in your server."""
 
                 embed = Embed(
                     color=colors.prim,
                     description=f"{description}\n[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate}) ",
                 )
                 embed.set_footer(
-                    text="If there is anything that you would like to see / changed, run 𝐭𝐩!𝐬𝐮𝐠𝐠𝐞𝐬𝐭 with your suggestion!\nAlso check out our server host!"
+                    text="If there is anything that you would like to see / changed, run /𝐬𝐮𝐠𝐠𝐞𝐬𝐭 with your suggestion!\nAlso check out our server host!"
                 )
             else:
-                description = f"""**{await Emoji.rand_rainbow()} {info_cog.qualified_name.capitalize()}**\n{info_names}\n\n**{await Emoji.rand_rainbow()} {fun_cog.qualified_name.capitalize()}**\n{fun_names}\n\n**{await Emoji.rand_rainbow()} {guild_cog.qualified_name.capitalize()}**\n{guild_names}\n\n**{await Emoji.rand_rainbow()} {mod_cog.qualified_name.capitalize()}**\n{mod_names}\n\n{await Emoji.rand_rainbow()} **{nsfw_cog.qualified_name.capitalize()}**\nNsfw commands are hidden. To see them run /help in any of these NSFW channels.\n{nsfw_channels}"""
+                description = f"""**{await Emoji.rand_rainbow()} {info_cog.qualified_name.capitalize()}**\n{info_names}\n\n**{await Emoji.rand_rainbow()} {fun_cog.qualified_name.capitalize()}**\n{fun_names}\n\n**{await Emoji.rand_rainbow()} {guild_cog.qualified_name.capitalize()}**\n{guild_names}\n\n**{await Emoji.rand_rainbow()} {mod_cog.qualified_name.capitalize()}**\n{mod_names}\n\n**{nsfw_cog.qualified_name.capitalize()}**\nNsfw commands are hidden. To see them run /help in any of these NSFW channels.\n{nsfw_channels}"""
 
                 embed = Embed(
                     color=colors.prim,
                     description=f"{description}\n[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate}) ",
                 )
                 embed.set_footer(
-                    text="If there is anything that you would like to see / changed, run 𝐭𝐩!𝐬𝐮𝐠𝐠𝐞𝐬𝐭 with your suggestion!"
+                    text="If there is anything that you would like to see / changed, run /𝐬𝐮𝐠𝐠𝐞𝐬𝐭 with your suggestion!"
                 )
 
             embed.set_thumbnail(url=self.context.bot.user.avatar)
@@ -221,12 +207,12 @@ class FormattedHelp(commands.HelpCommand):
 
         # embed = Embed(color=colors.prim, description=f"For help on individual commands, use `/help <command>`.\n\n{embed_description}")
         # embed.add_field(name='Support Server', value=f"[Click Me]({config.Server})")
-        # embed.set_footer(text="If there is anything that you would like to see / changed, run 𝐭𝐩!𝐬𝐮𝐠𝐠𝐞𝐬𝐭 with your suggestion!")
+        # embed.set_footer(text="If there is anything that you would like to see / changed, run /𝐬𝐮𝐠𝐠𝐞𝐬𝐭 with your suggestion!")
         # embed.set_thumbnail(url=self.context.bot.user.avatar)
         # await self.get_destination().send(embed=embed)
 
 
-async def setup(bot: Bot) -> None:
+async def setup(bot: AGB) -> None:
     await bot.add_cog(Help(bot))
     bot.get_command("help").hidden = True
 

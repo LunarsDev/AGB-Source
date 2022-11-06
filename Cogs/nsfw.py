@@ -10,6 +10,7 @@ import aiohttp
 import discord
 from discord.ext import commands
 from index import EMBED_COLOUR, colors, config
+from lunarapi import endpoints
 from utils import constants as sub
 from utils import default, imports, permissions
 from utils.checks import voter_only
@@ -28,6 +29,7 @@ from utils.views import APIImageReporter
 
 from Cogs.Utils import Translator
 
+
 _ = Translator("Nsfw", __file__)
 
 MY_GUILD_ID = discord.Object(975810661709922334)
@@ -36,14 +38,14 @@ config = imports.get("config.json")
 testing = ["True", "False"]
 
 if TYPE_CHECKING:
-    from index import Bot
+    from index import AGB
 
 
 class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
     """Spicy pictures"""
 
-    def __init__(self, bot: Bot):
-        self.bot: Bot = bot
+    def __init__(self, bot: AGB):
+        self.bot: AGB = bot
         self.use_reddit_api = random.choice(testing)
         self.session = aiohttp.ClientSession(headers={"User-Agent": "AGB"})
         self.lunar_headers = {f"{config.lunarapi.header}": f"{config.lunarapi.token}"}
@@ -53,8 +55,7 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
     async def cog_unload(self):
         self.bot.loop.create_task(self.session.close())
 
-    @staticmethod
-    async def cog_check(ctx):
+    async def cog_check(self, ctx):
         """A local check which applies to all commands in this cog."""
         if not ctx.guild:
             raise commands.NoPrivateMessage
@@ -73,9 +74,7 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
             sub = choice(subs)
             try:
                 if self.use_reddit_api:
-                    async with self.session.get(
-                        REDDIT_BASEURL.format(sub=sub)
-                    ) as reddit:
+                    async with self.session.get(REDDIT_BASEURL.format(sub=sub)) as reddit:
                         if reddit.status != 200:
                             return None, None
                         try:
@@ -92,16 +91,12 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
                             url = url[:-3] + "gif"
                         elif url.endswith(".gifv"):
                             url = url[:-1]
-                        elif not url.endswith(GOOD_EXTENSIONS) and not url.startswith(
-                            "https://gfycat.com"
-                        ):
+                        elif not url.endswith(GOOD_EXTENSIONS) and not url.startswith("https://gfycat.com"):
                             tries += 1
                             continue
                         return url, subr
                 else:
-                    async with self.session.get(
-                        MARTINE_API_BASE_URL, params={"name": sub}
-                    ) as resp:
+                    async with self.session.get(MARTINE_API_BASE_URL, params={"name": sub}) as resp:
                         if resp.status != 200:
                             tries += 1
                             continue
@@ -138,47 +133,33 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
             await self._api_errors_msg(ctx, error_code="JSON decode failed")
             return None
 
-    @staticmethod
-    async def _api_errors_msg(ctx: commands.Context, error_code: int = None):
+    async def _api_errors_msg(self, ctx: commands.Context, error_code: int = None):
         """Error message when API calls fail."""
         return await ctx.send(
             (
-                _(
-                    "Error when trying to contact image service, please try again later. "
-                )
+                _("Error when trying to contact image service, please try again later. ")
                 + f"(Code: {inline(str(error_code))})"
             )
         )
 
     async def _make_embed(self, ctx: commands.Context, subs: List[str], name: str):
         """Function to make the embed for all Reddit API images."""
-        db_user = self.bot.db.get_user(ctx.author.id) or await self.bot.db.fetch_user(
-            ctx.author.id
-        )
-        used_commands = f"{db_user.used_commands + 1} used commands"
         try:
             url, subr = await asyncio.wait_for(self._get_imgs(subs=subs), 5)
             log(subr)
         except asyncio.TimeoutError:
-            await ctx.send(
-                "Failed to get an image. Please try again later. (Timeout error)"
-            )
+            await ctx.send("Failed to get an image. Please try again later. (Timeout error)")
             return
         if not url:
             return
 
         return (
-            (
-                _("Here is {name} gif ...")
-                + " \N{EYES}\n\n"
-                + _("From {r}\n{url} • {u}")
-            ).format(
+            (_("Here is {name} gif ...") + " \N{EYES}\n\n" + _("From {r}\n{url}")).format(
                 name=name,
                 req=bold(ctx.author.name),
                 emoji=emoji(),
                 r=bold(f"r/{subr}"),
                 url=url,
-                u=used_commands,
             )
             if any(wrong in url for wrong in NOT_EMBED_DOMAINS)
             else await self._embed(
@@ -189,30 +170,24 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
                     escape_formatting=False,
                 ),
                 image=url,
-                footer=_("From r/{r} • {u}").format(
-                    req=ctx.author.display_name, emoji=emoji(), r=subr, u=used_commands
+                footer=_("From r/{r}").format(
+                    req=ctx.author.display_name,
+                    emoji=emoji(),
+                    r=subr,
                 ),
             )
         )
 
-    async def _make_embed_other(
-        self, ctx: commands.Context, name: str, url: str, arg: str, source: str
-    ):
+    async def _make_embed_other(self, ctx: commands.Context, name: str, url: str, arg: str, source: str):
         """Function to make the embed for all others APIs images."""
-        db_user = self.bot.db.get_user(ctx.author.id) or await self.bot.db.fetch_user(
-            ctx.author.id
-        )
-        used_commands = f"{db_user.used_commands + 1} used commands"
         try:
             data = await asyncio.wait_for(self._get_others_imgs(ctx, url=url), 5)
         except asyncio.TimeoutError:
-            await ctx.send(
-                "Failed to get an image. Please try again later. (Timeout error)"
-            )
+            await ctx.send("Failed to get an image. Please try again later. (Timeout error)")
             return
         if not data:
             return
-        em = await self._embed(
+        return await self._embed(
             color=colors.prim,
             title=(_("Here is {name} image ...") + " \N{EYES}").format(name=name),
             description=bold(
@@ -220,14 +195,13 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
                 escape_formatting=False,
             ),
             image=data["img"][arg],
-            footer=_("From {source} {e} • {u}").format(
-                source=source, e=emoji(), u=used_commands
+            footer=_("From {source} {e}").format(
+                source=source,
+                e=emoji(),
             ),
         )
-        return em
 
-    @staticmethod
-    async def _maybe_embed(ctx: commands.Context, embed: Union[discord.Embed, str]):
+    async def _maybe_embed(self, ctx: commands.Context, embed: Union[discord.Embed, str]):
         """
         Function to choose if type of the message is an embed or not
         and if not send a simple message.
@@ -250,11 +224,15 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
                 return await self._maybe_embed(ctx, embed=embed)
             # raise nsfw channel required
             raise commands.NSFWChannelRequired(ctx.channel)
-        await ctx.send(embed=embed, ephemeral=True)
+        try:
+            await ctx.send(embed=embed, ephemeral=True)
+        except discord.HTTPException as e:
+            await ctx.send(
+                f"Try again later. The command you ran returned nothing. \n{e}",
+                ephemeral=True,
+            )
 
-    async def _send_other_msg(
-        self, ctx: commands.Context, name: str, arg: str, source: str, url: str = None
-    ):
+    async def _send_other_msg(self, ctx: commands.Context, name: str, arg: str, source: str, url: str = None):
         """Main function called in all others APIs commands."""
         await ctx.typing(ephemeral=True)
         embed = await self._make_embed_other(ctx, name, url, arg, source)
@@ -264,8 +242,8 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
             raise commands.NSFWChannelRequired(ctx.channel)
         await ctx.send(embed=embed, ephemeral=True)
 
-    @staticmethod
     async def _embed(
+        self,
         color: EMBED_COLOUR,
         title: str = None,
         description: str = None,
@@ -281,9 +259,7 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
     async def get_hentai_img(self) -> str:
         other_stuff = ["jpg", "gif", "yuri", "panties", "thighs", "ass"]
         async with aiohttp.ClientSession(headers=self.lunar_headers) as s:
-            async with s.get(
-                f"https://api.lunardev.group/nsfw/{random.choice(other_stuff)}"
-            ) as r:
+            async with s.get(f"https://api.lunardev.group/nsfw/{random.choice(other_stuff)}") as r:
                 j = await r.json(content_type=None)
                 url = j["url"]
 
@@ -302,20 +278,16 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
 
     @commands.hybrid_command()
     @voter_only()
-    @permissions.dynamic_ownerbypass_cooldown(
-        rate=1, per=5, type=commands.BucketType.user
-    )
+    @permissions.dynamic_ownerbypass_cooldown(rate=1, per=5, type=commands.BucketType.user)
     @permissions.has_permissions(manage_channels=True)
-    @commands.bot_has_permissions(
-        embed_links=True, manage_channels=True, manage_webhooks=True, attach_files=True
-    )
-    async def autopost(
-        self, ctx, *, channel: discord.TextChannel, ephemeral: bool = False
-    ):
+    @commands.bot_has_permissions(embed_links=True, manage_channels=True, manage_webhooks=True, attach_files=True)
+    async def autopost(self, ctx, *, channel: discord.TextChannel, ephemeral: bool = False):
         """Mention a channel to autopost to. example: `/autopost #auto-nsfw`"""
         await ctx.typing(ephemeral=True)
         Server = self.bot.get_guild(755722576445046806)
 
+        cog = self.bot.get_cog("ap")
+        when = discord.utils.format_dt(cog.autoh.next_iteration, style="R")
         # check if the command was used as an interaction
         ephemeral = ctx.interaction is not None
         if not channel.is_nsfw():
@@ -340,23 +312,17 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
             return
 
         if not channel.mention:
-            await ctx.send(
-                "Please mention a channel for me to autopost to.", ephemeral=ephemeral
-            )
+            await ctx.send("Please mention a channel for me to autopost to.", ephemeral=ephemeral)
 
-        db_guild = self.bot.db.get_guild(ctx.guild.id) or await self.bot.db.fetch_guild(
-            ctx.guild.id
-        )
+        db_guild = await self.bot.db.getch("guilds", ctx.guild.id)
         if not db_guild:
             db_guild = await self.bot.db.add_guild(ctx.guild.id)
 
         if db_guild.hentai_channel_id and db_guild.hentai_channel_id == channel.id:
-            await ctx.send(
-                "whoops, guild already has a channel my dude", ephemeral=ephemeral
-            )
+            await ctx.send("whoops, guild already has a channel my dude", ephemeral=ephemeral)
             return
         # add to the db
-        await db_guild.modify(hentai_channel_id=channel.id)
+        await db_guild.edit(hentaichannel=channel.id)
 
         # edit the channel permissions to allow the bot to post
         overwrites = channel.overwrites
@@ -382,16 +348,14 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
         else:
             await ctx.send(
                 (
-                    f"{channel.mention} has been added to the database. I will start posting shortly!\n"
+                    f"{channel.mention} has been added to the database. I will start posting {when}\n"
                     "Make sure that the channel has no overrides that prevent me from posting!"
                 ),
                 ephemeral=ephemeral,
             )
 
     @commands.hybrid_command()
-    @permissions.dynamic_ownerbypass_cooldown(
-        rate=1, per=5, type=commands.BucketType.user
-    )
+    @permissions.dynamic_ownerbypass_cooldown(rate=1, per=5, type=commands.BucketType.user)
     @voter_only()
     @permissions.has_permissions(manage_channels=True)
     async def autopost_remove(self, ctx):
@@ -400,18 +364,14 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
         # await ctx.send(f"This command is currently disabled because it is no
         # longer working (for now). Please join the support server to know what
         # is going on - {config.Server}")
-        db_guild = self.bot.db.get_guild(ctx.guild.id) or await self.bot.db.fetch_guild(
-            ctx.guild.id
-        )
+        db_guild = await self.bot.db.getch("guilds", ctx.guild.id)
         if not db_guild or not db_guild.hentai_channel_id:
             await ctx.send("you don't have a fukin' channel idot.")
             return
 
         # remove the channel from the db
-        await db_guild.modify(hentai_channel_id=None)
-        await ctx.send(
-            "Alright, your auto posting channel has been removed from our database."
-        )
+        await db_guild.edit(hentaichannel=None)
+        await ctx.send("Alright, your auto posting channel has been removed from our database.")
 
     @commands.hybrid_group()
     @voter_only()
@@ -421,56 +381,48 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
         await ctx.typing(ephemeral=True)
         # return await ctx.send("This command is being on.", ephemeral=True)
         if ctx.invoked_subcommand is None:
-            return await ctx.send(
-                "Invalid nsfw command. Please use `/help nsfw` to see the nsfw commands."
-            )
+            return await ctx.send("Invalid nsfw command. Please use `/help nsfw` to see the nsfw commands.")
 
     @nsfw.command()
     @voter_only()
     @permissions.dynamic_ownerbypass_cooldown(1, 3, commands.BucketType.user)
     async def butt(self, ctx):
         """the thing that you sit on!\nUse `/nsfw command` to use this command."""
-        db_user = self.bot.db.get_user(ctx.author.id) or await self.bot.db.fetch_user(
-            ctx.author.id
-        )
-        used_commands = db_user.used_commands + 1
-        if random.randint(1, 5) == 1:
-            await ctx.typing(ephemeral=True)
-            # return await ctx.send("This command is being on.", ephemeral=True)
-            url = await self.get_hentai_lunar("ass")
+        # if random.randint(1, 5) == 1:
+        #     await ctx.typing(ephemeral=True)
+        #     # return await ctx.send("This command is being on.", ephemeral=True)
+        #     image = await self.bot.lunar_client.request(endpoints.nsfw("ass"))
+        #     data = await image.to_dict()
 
-            embed = Embed(
-                title="Enjoy",
-                url="https://lunardev.group/",
-                description=f"[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate})",
-                colour=colors.prim,
-            )
-            embed.set_image(url=url)
-            embed.set_footer(
-                text=f"{random.choice(partners)} | {used_commands} commands used."
-            )
-            if ctx.interaction is None:
-                if not ctx.channel.is_nsfw():
-                    # raise nsfw channel required
-                    raise commands.NSFWChannelRequired(ctx.channel)
-                await ctx.send(embed=embed, view=APIImageReporter())
-                return
-            await ctx.send(embed=embed, ephemeral=True, view=APIImageReporter())
-        else:
-            await self._send_msg(ctx, "ass", sub.ASS)
+        #     embed = Embed(
+        #         title="Enjoy",
+        #         url="https://lunardev.group/",
+        #         description=f"[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate})",
+        #         colour=colors.prim,
+        #     )
+        #     embed.set_image(url=f"{data['url']}")
+        #     embed.set_footer(
+        #         text=f"{random.choice(partners)}"
+        #     )
+        #     if ctx.interaction is None:
+        #         if not ctx.channel.is_nsfw():
+        #             # raise nsfw channel required
+        #             raise commands.NSFWChannelRequired(ctx.channel)
+        #         await ctx.send(embed=embed, view=APIImageReporter())
+        #         return
+        #     await ctx.send(embed=embed, ephemeral=True, view=APIImageReporter())
+        # else:
+        await self._send_msg(ctx, "ass", sub.ASS)
 
     @nsfw.command()
     @voter_only()
     @permissions.dynamic_ownerbypass_cooldown(1, 3, commands.BucketType.user)
     async def underwear(self, ctx):
         """underwear\nUse `/nsfw command` to use this command."""
-        db_user = self.bot.db.get_user(ctx.author.id) or await self.bot.db.fetch_user(
-            ctx.author.id
-        )
-        used_commands = db_user.used_commands + 1
         await ctx.typing(ephemeral=True)
         # # return await ctx.send("This command is being on.", ephemeral=True)
-        url = await self.get_hentai_lunar("panties")
+        image = await self.bot.lunar_client.request(endpoints.nsfw("panties"))
+        data = await image.to_dict()
 
         embed = Embed(
             title="Enjoy",
@@ -478,10 +430,8 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
             description=f"[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate})",
             colour=colors.prim,
         )
-        embed.set_image(url=url)
-        embed.set_footer(
-            text=f"{random.choice(partners)} | {used_commands} commands used."
-        )
+        embed.set_image(url=f"{data['url']}")
+        embed.set_footer(text=f"{random.choice(partners)}")
         if ctx.interaction is None:
             if not ctx.channel.is_nsfw():
                 # raise nsfw channel required
@@ -495,14 +445,10 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
     @permissions.dynamic_ownerbypass_cooldown(1, 3, commands.BucketType.user)
     async def holo(self, ctx):
         """holo live streamer nsfw\nUse `/nsfw command` to use this command."""
-        db_user = self.bot.db.get_user(ctx.author.id) or await self.bot.db.fetch_user(
-            ctx.author.id
-        )
-        used_commands = db_user.used_commands + 1
         await ctx.typing(ephemeral=True)
         # return await ctx.send("This command is being on.", ephemeral=True)
-        url = await self.get_hentai_lunar("hololive")
-        log(url)
+        image = await self.bot.lunar_client.request(endpoints.nsfw("hololive"))
+        data = await image.to_dict()
 
         embed = Embed(
             title="Enjoy",
@@ -510,10 +456,11 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
             description=f"[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate})",
             colour=colors.prim,
         )
-        embed.set_image(url=url)
-        embed.set_footer(
-            text=f"{random.choice(partners)} | {used_commands} commands used."
-        )
+        if not data.get("url"):
+            return await ctx.send("No image found.")
+
+        embed.set_image(url=f"{data['url']}")
+        embed.set_footer(text=f"{random.choice(partners)}")
         if ctx.interaction is None:
             if not ctx.channel.is_nsfw():
                 # raise nsfw channel required
@@ -525,16 +472,12 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
     @nsfw.command()
     @voter_only()
     @permissions.dynamic_ownerbypass_cooldown(1, 3, commands.BucketType.user)
-    async def ahegao(self, ctx):
+    async def o_face(self, ctx):
         """Ahegao face nsfw\nUse `/nsfw command` to use this command."""
-        db_user = self.bot.db.get_user(ctx.author.id) or await self.bot.db.fetch_user(
-            ctx.author.id
-        )
-        used_commands = db_user.used_commands + 1
         await ctx.typing(ephemeral=True)
         # return await ctx.send("This command is being on.", ephemeral=True)
-        url = await self.get_hentai_lunar("ahegao")
-        log(url)
+        image = await self.bot.lunar_client.request(endpoints.nsfw("ahegao"))
+        data = await image.to_dict()
 
         embed = Embed(
             title="Enjoy",
@@ -542,10 +485,8 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
             description=f"[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate})",
             colour=colors.prim,
         )
-        embed.set_image(url=url)
-        embed.set_footer(
-            text=f"{random.choice(partners)} | {used_commands} commands used."
-        )
+        embed.set_image(url=f"{data['url']}")
+        embed.set_footer(text=f"{random.choice(partners)}")
         if ctx.interaction is None:
             if not ctx.channel.is_nsfw():
                 # raise nsfw channel required
@@ -559,23 +500,19 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
     @permissions.dynamic_ownerbypass_cooldown(1, 3, commands.BucketType.user)
     async def kemo(self, ctx):
         """kemonomimi; fox girls/cat girls/animal girls\nUse `/nsfw command` to use this command."""
-        db_user = self.bot.db.get_user(ctx.author.id) or await self.bot.db.fetch_user(
-            ctx.author.id
-        )
-        used_commands = db_user.used_commands + 1
         await ctx.typing(ephemeral=True)
         # return await ctx.send("This command is being on.", ephemeral=True)
-        url = await self.get_hentai_lunar("neko")
+        image = await self.bot.lunar_client.request(endpoints.nsfw("neko"))
+        data = await image.to_dict()
+
         embed = Embed(
             title="Enjoy",
             url="https://lunardev.group/",
             description=f"[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate})",
             colour=colors.prim,
         )
-        embed.set_image(url=url)
-        embed.set_footer(
-            text=f"{random.choice(partners)} | {used_commands} commands used."
-        )
+        embed.set_image(url=f"{data['url']}")
+        embed.set_footer(text=f"{random.choice(partners)}")
         if ctx.interaction is None:
             if not ctx.channel.is_nsfw():
                 # raise nsfw channel required
@@ -589,13 +526,10 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
     @permissions.dynamic_ownerbypass_cooldown(1, 3, commands.BucketType.user)
     async def pwg(self, ctx):
         """gif\nUse `/nsfw command` to use this command."""
-        db_user = self.bot.db.get_user(ctx.author.id) or await self.bot.db.fetch_user(
-            ctx.author.id
-        )
-        used_commands = db_user.used_commands + 1
         await ctx.typing(ephemeral=True)
         # return await ctx.send("This command is being on.", ephemeral=True)
-        url = await self.get_hentai_lunar("panties")
+        image = await self.bot.lunar_client.request(endpoints.nsfw("panties"))
+        data = await image.to_dict()
 
         embed = Embed(
             title="Enjoy",
@@ -603,10 +537,8 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
             description=f"[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate})",
             colour=colors.prim,
         )
-        embed.set_image(url=url)
-        embed.set_footer(
-            text=f"{random.choice(partners)} | {used_commands} commands used."
-        )
+        embed.set_image(url=f"{data['url']}")
+        embed.set_footer(text=f"{random.choice(partners)}")
         if ctx.interaction is None:
             if not ctx.channel.is_nsfw():
                 # raise nsfw channel required
@@ -620,13 +552,10 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
     @permissions.dynamic_ownerbypass_cooldown(1, 3, commands.BucketType.user)
     async def thighs(self, ctx):
         """thigh pictures\nUse `/nsfw command` to use this command."""
-        db_user = self.bot.db.get_user(ctx.author.id) or await self.bot.db.fetch_user(
-            ctx.author.id
-        )
-        used_commands = db_user.used_commands + 1
         await ctx.typing(ephemeral=True)
         # return await ctx.send("This command is being on.", ephemeral=True)
-        url = await self.get_hentai_lunar("thighs")
+        image = await self.bot.lunar_client.request(endpoints.nsfw("thighs"))
+        data = await image.to_dict()
 
         embed = Embed(
             title="Enjoy",
@@ -634,10 +563,8 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
             description=f"[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate})",
             colour=colors.prim,
         )
-        embed.set_image(url=url)
-        embed.set_footer(
-            text=f"{random.choice(partners)} | {used_commands} commands used."
-        )
+        embed.set_image(url=f"{data['url']}")
+        embed.set_footer(text=f"{random.choice(partners)}")
         if ctx.interaction is None:
             if not ctx.channel.is_nsfw():
                 # raise nsfw channel required
@@ -646,6 +573,7 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
             return
         await ctx.send(embed=embed, ephemeral=True, view=APIImageReporter())
 
+    # from https://github.com/PredaaA/predacogs/tree/master/nsfw
     @commands.hybrid_group()
     @voter_only()
     @permissions.dynamic_ownerbypass_cooldown(1, 3, commands.BucketType.user)
@@ -654,9 +582,7 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
         await ctx.typing(ephemeral=True)
         # return await ctx.send("This command is being on.", ephemeral=True)
         if ctx.invoked_subcommand is None:
-            return await ctx.send(
-                "Invalid nsfw command. Please use `/help reddit_irl` to see the nsfw commands."
-            )
+            return await ctx.send("Invalid nsfw command. Please use `/help reddit_irl` to see the nsfw commands.")
 
     @commands.hybrid_group()
     @voter_only()
@@ -666,9 +592,7 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
         await ctx.typing(ephemeral=True)
         # return await ctx.send("This command is being on.", ephemeral=True)
         if ctx.invoked_subcommand is None:
-            return await ctx.send(
-                "Invalid nsfw command. Please use `/help reddit_drawing` to see the nsfw commands."
-            )
+            return await ctx.send("Invalid nsfw command. Please use `/help reddit_drawing` to see the nsfw commands.")
 
     @commands.hybrid_group()
     @voter_only()
@@ -678,9 +602,7 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
         await ctx.typing(ephemeral=True)
         # return await ctx.send("This command is being on.", ephemeral=True)
         if ctx.invoked_subcommand is None:
-            return await ctx.send(
-                "Invalid nsfw command. Please use `/help reddit` to see the nsfw commands."
-            )
+            return await ctx.send("Invalid nsfw command. Please use `/help reddit` to see the nsfw commands.")
 
     @reddit_irl.command()
     @voter_only()
@@ -885,5 +807,5 @@ class Nsfw(commands.Cog, name="nsfw", command_attrs=dict(nsfw=True)):
         await self._send_msg(ctx, "yiff", sub.YIFF)
 
 
-async def setup(bot: Bot) -> None:
+async def setup(bot: AGB) -> None:
     await bot.add_cog(Nsfw(bot))

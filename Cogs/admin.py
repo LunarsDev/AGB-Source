@@ -139,9 +139,7 @@ class EvalView(discord.ui.View):
     )
     async def click_here(self, interaction: discord.Interaction, _: discord.ui.Button):
         if self.author != interaction.user.id:
-            return await interaction.response.send_message(
-                "You can't do this!", ephemeral=True
-            )
+            return await interaction.response.send_message("You can't do this!", ephemeral=True)
         await interaction.response.send_modal(self.modal)
         self.stop()
 
@@ -191,9 +189,7 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
         self.last_change = None
         self.tax_rate = 0
         self.tax_collector = None
-        self.lunar_headers = {
-            f"{self.config.lunarapi.header}": f"{self.config.lunarapi.token}"
-        }
+        self.lunar_headers = {f"{self.config.lunarapi.header}": f"{self.config.lunarapi.token}"}
         self.yes_responses = {
             "yes": True,
             "yea": True,
@@ -212,7 +208,6 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
         self.nword_re = r"\b(n|m|и|й){1,32}(i|1|l|!|ᴉ|¡){1,32}((g|ƃ|6|б{2,32}|q){1,32}|[gqgƃ6б]{2,32})(a|e|3|з|u)(r|Я|s|5|$){1,32}\b"
         self.nword_re_comp = re.compile(self.nword_re, re.IGNORECASE | re.UNICODE)
         self.afks = {}
-
 
         self.errors = (
             commands.NoPrivateMessage,
@@ -251,14 +246,10 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
 
     async def run_process(self, command):
         try:
-            process = await asyncio.create_subprocess_shell(
-                command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-            )
+            process = await asyncio.create_subprocess_shell(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             result = await process.communicate()
         except NotImplementedError:
-            process = subprocess.Popen(
-                command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-            )
+            process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             result = await self.bot.loop.run_in_executor(None, process.communicate)
         return [output.decode() for output in result]
 
@@ -292,15 +283,11 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
                 return await super().convert(ctx, argument)
             except commands.BadArgument as e:
                 members = [
-                    member
-                    for member in ctx.guild.members
-                    if member.display_name.lower().startswith(argument.lower())
+                    member for member in ctx.guild.members if member.display_name.lower().startswith(argument.lower())
                 ]
                 if len(members) == 1:
                     return members[0]
-                raise commands.BadArgument(
-                    f"{len(members)} members found, please be more specific."
-                ) from e
+                raise commands.BadArgument(f"{len(members)} members found, please be more specific.") from e
 
     async def get_or_remove_users_from_database(
         self,
@@ -404,9 +391,7 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
     @commands.Cog.listener()
     async def on_guild_join(self, guild: discord.Guild):
         if self.nword_re_comp.search(guild.name.lower()):
-            await self.try_to_send_msg_in_a_channel(
-                guild, "im gonna leave cuz of the server name"
-            )
+            await self.try_to_send_msg_in_a_channel(guild, "im gonna leave cuz of the server name")
             return await guild.leave()
         for channel in guild.channels:
             if self.nword_re_comp.search(guild.name.lower()):
@@ -493,9 +478,7 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
         embed = Embed(title="API Token Gen", colour=discord.Colour.green())
 
         async def api_send_email(email, username, token):
-            async with aiohttp.ClientSession(
-                headers={"Content-Type": "application/json"}
-            ) as s:
+            async with aiohttp.ClientSession(headers={"Content-Type": "application/json"}) as s:
                 async with s.post(
                     "https://api.emailjs.com/api/v1.0/email/send",
                     json={
@@ -583,11 +566,7 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
     @commands.check(permissions.is_owner)
     async def findmutuals(self, ctx, user: discord.User = None):
         user = ctx.author if user is None else user
-        mutuals = [
-            f"{guild.id}: {guild.name}"
-            for guild in self.bot.guilds
-            if user in guild.members
-        ]
+        mutuals = [f"{guild.id}: {guild.name}" for guild in self.bot.guilds if user in guild.members]
         mutuals = "\n".join(mutuals)
         await ctx.send(f"```{mutuals}```")
         return
@@ -617,9 +596,7 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
     @owner.command(name="dbfetch")
     @commands.check(permissions.is_owner)
     async def db_fetch(self, ctx):
-        message = await ctx.send(
-            "Fetching all servers and users, and adding them to the DB, please wait!"
-        )
+        message = await ctx.send("Fetching all servers and users, and adding them to the DB, please wait!")
         log("Chunking servers, please be patient..")
         for guild in self.bot.guilds:
             if not guild.chunked:
@@ -757,9 +734,7 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
                 if ctx.guild.me.top_role > member.top_role:
                     return await ctx.author.send("I can ban this user!")
                 if ctx.guild.me.top_role == member.top_role:
-                    return await ctx.author.send(
-                        "That user has the same role as me, i cant ban them"
-                    )
+                    return await ctx.author.send("That user has the same role as me, i cant ban them")
                 if ctx.guild.me.top_role < member.top_role:
                     await ctx.author.send(
                         "User has a higher role than me, I can't ban them! but i do have the permission to ban members"
@@ -792,17 +767,13 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
                     await guild.chunk()
                     chunked_guilds += 1
                     if chunked_guilds % random.randint(1, 15) == 0:
-                        await bruh.edit(
-                            content=f"Chunked {chunked_guilds}/{len(self.bot.guilds)} guilds"
-                        )
+                        await bruh.edit(content=f"Chunked {chunked_guilds}/{len(self.bot.guilds)} guilds")
                         await asyncio.sleep(random.randint(1, 3))
 
             log(
                 f"Chunked {formatColor(str(chunked_guilds), 'green')} / {formatColor(str(len(self.bot.guilds)), 'green')} guilds"
             )
-            await bruh.edit(
-                content=f"Done chunking guilds! {chunked_guilds}/{len(self.bot.guilds)} guilds chunked!"
-            )
+            await bruh.edit(content=f"Done chunking guilds! {chunked_guilds}/{len(self.bot.guilds)} guilds chunked!")
 
     @owner.command(aliases=["speedtest"])
     @commands.check(permissions.is_owner)
@@ -810,9 +781,7 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         loop = asyncio.get_event_loop()
         speed_test = speedtest.Speedtest(secure=True)
-        the_embed = await ctx.send(
-            embed=self.generate_embed(0, speed_test.results.dict())
-        )
+        the_embed = await ctx.send(embed=self.generate_embed(0, speed_test.results.dict()))
         await loop.run_in_executor(executor, speed_test.get_servers)
         await loop.run_in_executor(executor, speed_test.get_best_server)
         await the_embed.edit(embed=self.generate_embed(1, speed_test.results.dict()))
@@ -960,9 +929,7 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
             if not user_id.isdigit():
                 await ctx.send(f"{user_id} is not a valid user ID.")
                 continue
-            user = self.bot.get_user(int(user_id)) or await self.bot.fetch_user(
-                int(user_id)
-            )
+            user = self.bot.get_user(int(user_id)) or await self.bot.fetch_user(int(user_id))
             if not user:
                 await ctx.send(f"{user_id} is not a valid user ID.")
                 continue
@@ -1065,33 +1032,24 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
 
         # find the user with the most messages
         most_messages = max(speaker_count.values())
-        most_messages_users = [
-            user for user, value in speaker_count.items() if value == most_messages
-        ]
+        most_messages_users = [user for user, value in speaker_count.items() if value == most_messages]
 
         # find the user with the most messages
         most_messages_user = most_messages_users[0]
         for user in most_messages_users:
-            if (
-                ctx.guild.get_member(user).display_name
-                > ctx.guild.get_member(most_messages_user).display_name
-            ):
+            if ctx.guild.get_member(user).display_name > ctx.guild.get_member(most_messages_user).display_name:
                 most_messages_user = user
 
         # find the user with the most messages
         most_messages_user = ctx.guild.get_member(most_messages_user)
 
         # send the message
-        await ctx.send(
-            f"{most_messages_user.mention} has spoken the most in the server! ({most_messages} messages)"
-        )
+        await ctx.send(f"{most_messages_user.mention} has spoken the most in the server! ({most_messages} messages)")
 
     @commands.check(permissions.is_owner)
     @owner.command()
     async def whatcanyousee(self, ctx):
-        channel_list = "".join(
-            f"{channel.mention}\n" for channel in ctx.guild.text_channels
-        )
+        channel_list = "".join(f"{channel.mention}\n" for channel in ctx.guild.text_channels)
 
         await ctx.send(f"Here are the channels I can see:\n{channel_list}")
 
@@ -1118,9 +1076,7 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
             else:
                 synced = await ctx.bot.tree.sync()
 
-            await ctx.send(
-                f"Synced {len(synced)} commands {'globally' if spec is None else 'to the current guild.'}"
-            )
+            await ctx.send(f"Synced {len(synced)} commands {'globally' if spec is None else 'to the current guild.'}")
             return
 
         ret = 0
@@ -1156,27 +1112,19 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
             try:
                 await self.bot.load_extension(extension)
             except commands.errors.ExtensionAlreadyLoaded:
-                await interaction.followup.send(
-                    f"The cog `{extension}` is already loaded!"
-                )
-            await interaction.followup.send(
-                f"The extension `{extension}` has been loaded!"
-            )
+                await interaction.followup.send(f"The cog `{extension}` is already loaded!")
+            await interaction.followup.send(f"The extension `{extension}` has been loaded!")
 
         elif options.value == "unload":
             try:
                 await self.bot.unload_extension(extension)
             except commands.errors.ExtensionNotLoaded:
                 await interaction.followup.send(f"The cog `{extension}` wasn't loaded!")
-            await interaction.followup.send(
-                f"The extension `{extension}` has been unloaded!"
-            )
+            await interaction.followup.send(f"The extension `{extension}` has been unloaded!")
 
         elif options.value == "reload":
             await self.bot.reload_extension(extension)
-            await interaction.followup.send(
-                f"The extension `{extension}` has been reloaded!"
-            )
+            await interaction.followup.send(f"The extension `{extension}` has been reloaded!")
 
         elif options.value == "loadall":
             for file in sorted(pathlib.Path("Cogs").glob("**/[!_]*.py")):
@@ -1191,9 +1139,7 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
             await interaction.followup.send("Reloaded all extensions!")
 
     @cog.autocomplete("extension")
-    async def autocomplete_callback(
-        self, interaction: discord.Interaction, current: str
-    ):
+    async def autocomplete_callback(self, interaction: discord.Interaction, current: str):
         extensions = []
         for file in sorted(pathlib.Path("Cogs").glob("**/[!_]*.py")):
             cog = ".".join(file.parts).removesuffix(".py")
@@ -1226,8 +1172,7 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
             )
         else:
             await ctx.send(
-                f"Reloaded the following extensions\n"
-                + "\n".join(f"**{name}.py**" for name in names),
+                f"Reloaded the following extensions\n" + "\n".join(f"**{name}.py**" for name in names),
                 delete_after=delay,
             )
 
@@ -1245,10 +1190,7 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
             await ctx.send(f"Removed `{rmcodes[0]}` from the API.", delete_after=delay)
             return
         await ctx.send(
-            (
-                f"removed the following\n"
-                + "\n".join(f"**{rmcode}**" for rmcode in rmcodes)
-            ),
+            (f"removed the following\n" + "\n".join(f"**{rmcode}**" for rmcode in rmcodes)),
             delete_after=delay,
         )
 
@@ -1258,17 +1200,9 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
         for attachment in ctx.message.attachments:
             attachment.save(attachment.filename)
 
-    async def restart_container_autocomplete(
-        self, _: discord.Interaction, current: str
-    ) -> list[Choice[str]]:
-        all_choices = [
-            Choice(name=name, value=_id) for name, _id in self.CONTAINERS.items()
-        ]
-        startswiths_choices = [
-            c
-            for c in all_choices
-            if c.name.startswith(current) or c.value.startswith(current)
-        ]
+    async def restart_container_autocomplete(self, _: discord.Interaction, current: str) -> list[Choice[str]]:
+        all_choices = [Choice(name=name, value=_id) for name, _id in self.CONTAINERS.items()]
+        startswiths_choices = [c for c in all_choices if c.name.startswith(current) or c.value.startswith(current)]
         return (startswiths_choices or all_choices) if current else all_choices
 
     @owner.command()
@@ -1295,9 +1229,7 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
     @commands.check(permissions.is_owner)
     async def dm(self, ctx, user: discord.User, *, message: str):
         if user.bot:
-            return await ctx.send(
-                "I can't DM bots.\nI mean I can, I just don't want to..."
-            )
+            return await ctx.send("I can't DM bots.\nI mean I can, I just don't want to...")
         with suppress(Exception):
             await ctx.message.delete()
         e = Embed(
@@ -1352,9 +1284,7 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
         try:
             await ctx.guild.me.edit(nick=name)
             if name:
-                await ctx.send(
-                    f"Successfully changed nickname to **{name}**", delete_after=delay
-                )
+                await ctx.send(f"Successfully changed nickname to **{name}**", delete_after=delay)
             else:
                 await ctx.send("Successfully removed nickname", delete_after=delay)
         except Exception as err:
@@ -1378,9 +1308,7 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
         except aiohttp.InvalidURL:
             await ctx.send("The URL is invalid...", delete_after=delay)
         except discord.InvalidArgument:
-            await ctx.send(
-                "This URL does not contain a useable image", delete_after=delay
-            )
+            await ctx.send("This URL does not contain a useable image", delete_after=delay)
         except discord.HTTPException as err:
             await ctx.send(err)
         except TypeError:

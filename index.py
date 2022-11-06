@@ -1,10 +1,12 @@
-import asyncio
 import logging
 import os
+import gc
 import random
 from datetime import datetime, timezone
 
+import aiohttp
 import discord
+from lunarapi import Client
 import sentry_sdk
 from colorama import Fore, Style, init
 from discord import Interaction, app_commands
@@ -17,18 +19,13 @@ from sentry_sdk.integrations.threading import ThreadingIntegration
 from Manager.database import Database
 from Manager.logger import formatColor
 from utils import imports, permissions
-from utils.errors import DatabaseError, DisabledCommand
-from utils.views import APIImageReporter, APIImageDevReport
+from utils.errors import DisabledCommand
+from utils.views import APIImageDevReport, APIImageReporter
+
+gc.enable()
 
 # Set timezone
 os.environ["TZ"] = "America/New_York"
-
-try:
-    import uvloop  # type: ignore
-except ImportError:
-    pass
-else:
-    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
 init()
 
@@ -68,19 +65,14 @@ slash_errors = (
 )
 
 
-#
-
-
 # async def create_slash_embed(self, interaction, error):
 #     await interaction.response.defer(ephemeral=True, thinking=True)
 #     embed = Embed(title="Error", colour=0xFF0000)
 #     embed.add_field(name="Author", value=interaction.user.mention)True
 async def update_command_usages(interaction: Interaction) -> bool:
-    bot: Bot = interaction.client  # type: ignore # shut
+    bot: AGB = interaction.client  # type: ignore # shut
 
-    db_user = bot.db.get_user(interaction.user.id) or await bot.db.fetch_user(
-        interaction.user.id
-    )
+    db_user = bot.db.get_user(interaction.user.id) or await bot.db.fetch_user(interaction.user.id)
     if not db_user:
         return False
 
@@ -104,8 +96,7 @@ class AGBTree(app_commands.CommandTree):
 
 
 # Don't touch this.
-sentry_logging = LoggingIntegration(
-    level=logging.INFO, event_level=logging.ERROR)
+sentry_logging = LoggingIntegration(level=logging.INFO, event_level=logging.ERROR)
 sentry_sdk.init(
     config.sentryDSN,
     integrations=[
@@ -117,13 +108,14 @@ sentry_sdk.init(
     traces_sample_rate=1.0,
 )
 
-partners = ["melonbot.io", "Play with us: mc.lunardev.group"]
+partners = ["dash.lunardev.group", "connect.twisea.net"]
 
 
-class Bot(commands.AutoShardedBot):
+class AGB(commands.AutoShardedBot):
     def __init__(self, intents: discord.Intents, *args, **kwargs) -> None:
+        lunar_client: Client
         self.default_prefix = kwargs.get("default_prefix", config.prefix)
-        default_status = "AGB Beta <3" if DEV else "Hi <3"
+        default_status = "AAAAAAAAAA" if DEV else "my brain aint braining"
         self.embed_color = kwargs.get("embed_color", 3429595)
         super().__init__(
             command_prefix=commands.when_mentioned_or("tp!"),
@@ -133,14 +125,13 @@ class Bot(commands.AutoShardedBot):
             help_command=None,
             reconnect=True,
             command_attrs=dict(hidden=True),
-            status=discord.Status.dnd,
+            status=discord.Status.online,
             activity=discord.Game(name=default_status),
             chunk_guilds_at_startup=False,
+            max_messages=30,
             intents=intents,
             tree_cls=AGBTree,
-            allowed_mentions=discord.AllowedMentions(
-                roles=False, users=True, everyone=False, replied_user=False
-            ),
+            allowed_mentions=discord.AllowedMentions(roles=False, users=True, everyone=False, replied_user=False),
         )
 
         self.launch_time = datetime.now(timezone.utc)
@@ -148,12 +139,15 @@ class Bot(commands.AutoShardedBot):
         self.message_cooldown = commands.CooldownMapping.from_cooldown(
             1.0, random.randint(1, 5), commands.BucketType.guild
         )
+        self.config = imports.get("config.json")
 
         self.db: Database = Database(self, db_config)
         self.add_check(self.global_commands_check)
 
     async def setup_hook(self):
-        await self.db.initate_database(chunk=True)
+        await self.db.initate_database(chunk=DEV)
+        self.session = aiohttp.ClientSession()
+        self.lunar_client = Client(session=self.session, token=self.config.lunarapi.token)
         from utils.default import log
 
         self.add_view(APIImageReporter())
@@ -179,11 +173,55 @@ class Bot(commands.AutoShardedBot):
         logger.info("Closing bot...")
         await super().close()
         await self.db.close()
+        await self.session.close()
 
     async def on_message(self, msg) -> None:
         if not self.is_ready() or msg.author.bot or not permissions.can_send(msg):
             return
         await self.process_commands(msg)
+
+        # if msg.content.lower().startswith("tp!"):
+        #     msg.content = msg.content[: len("tp!")].lower() + msg.content[len("tp!") :]
+        # if bot.user in msg.mentions:
+        #     current_guild_info = self.db.get_guild(
+        #         msg.guild.id
+        #     ) or await self.db.fetch_guild(msg.guild.id)
+        #     if current_guild_info:
+        #         embed = Embed(
+        #             title="Hi! My name is AGB!",
+        #             url=Website,
+        #             colour=colors.prim,
+        #             description=f"If you like me, please take a look at the links below!\n[Add me]({config.Invite}) | [Support Server]({config.Server}) | [Vote]({config.Vote})",
+        #             timestamp=msg.created_at,
+        #         )
+        #         embed.add_field(
+        #             name="Prefix for this server:", value=f"{current_guild_info.prefix}"
+        #         )
+        #         embed.add_field(
+        #             name="Help command", value=f"{current_guild_info.prefix}help"
+        #         )
+        #         embed.set_footer(
+        #             text="lunardev.group",
+        #             icon_url=msg.author.avatar,
+        #         )
+        #         bucket = self.message_cooldown.get_bucket(msg)
+        #         if retry_after := bucket.update_rate_limit():
+        #             return
+        #         if (
+        #             msg.reference is None
+        #             and random.randint(1, 2) == 1
+        #             or msg.reference is not None
+        #         ):
+        #             return
+        #         try:
+        #             await msg.channel.send(embed=embed)
+        #             return
+        #         except Exception:
+        #             await msg.channel.send(
+        #                 f"**Hi, My name is AGB!**\nIf you like me and want to know more information about me, please enable embed permissions in your server settings so I can show you more information!\nIf you don't know how, please join the support server and ask for help!\n{config.Server}"
+        #             )
+
+        # await self.process_commands(msg)
 
     async def on_message_edit(self, before, after):
         if before.content == after.content:
@@ -205,27 +243,40 @@ class Bot(commands.AutoShardedBot):
                 return await ctx.bot.is_owner(ctx.author)
             return True
 
-        try:
-            command = self.db.get_command(
-                ctx.command.name
-            ) or await self.db.fetch_command(ctx.command.name, cache=True)
-            if command is None:
-                command = await self.db.add_command(ctx.command.name)
-                return True
-        except DatabaseError as e:
-            sentry_sdk.capture_exception(e)
+        guild_command_entry = self.db.get_command(ctx.guild.id)
+        if not guild_command_entry or not guild_command_entry.disabled:
+            # no commands disabled...
             return True
 
-        command_state = command.state_in(ctx.guild.id)
-        if command_state is True:
-            raise DisabledCommand()
+        is_group: bool = isinstance(ctx.command, commands.Group) or ctx.command.parent is not None
+        disabled_commands = []
+        left_overs = []
+        if not is_group and guild_command_entry.is_disabled(ctx.command.qualified_name):
+            raise DisabledCommand(is_group=False, qualified_name=ctx.command.qualified_name)
+
+        group_disabled = False
+        for index, cmd in enumerate(ctx.command.qualified_name.split(" ")):
+            if guild_command_entry.is_disabled(cmd):
+                if index == 0:
+                    group_disabled = True
+                disabled_commands.append(cmd)
+            else:
+                left_overs.append(cmd)
+
+        if disabled_commands:
+            raise DisabledCommand(
+                is_group=is_group,
+                qualified_name=ctx.command.qualified_name,
+                group_disabled=group_disabled,
+                disabled=disabled_commands,
+            )
         return True
 
 
 intents = discord.Intents.default()
 intents.members = True
 
-bot = Bot(intents)
+bot = AGB(intents)
 
 os.environ.setdefault("JISHAKU_HIDE", "1")
 os.environ["JISHAKU_NO_UNDERSCORE"] = "True"
@@ -244,7 +295,7 @@ def no_nwords(ctx):
 
 class colors:
     default = 0
-    prim = 1592481
+    prim = 0x2F3136
     teal = 0x1ABC9C
     dark_teal = 0x11806A
     green = 0x2ECC71

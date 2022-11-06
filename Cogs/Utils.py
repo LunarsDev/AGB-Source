@@ -14,7 +14,7 @@ from index import colors
 from utils.embeds import EmbedMaker as Embed
 
 if TYPE_CHECKING:
-    from index import Bot
+    from index import AGB
 
 # bot = None
 # url_regex =
@@ -31,7 +31,7 @@ MSGSTR = 'msgstr "'
 _translators = []
 
 
-async def setup(bot: Bot):
+async def setup(bot: AGB):
     # This module isn't actually a cog - but it is a place
     # we can call "a trash fire"
     await bot.add_cog(Utils(bot))
@@ -43,8 +43,8 @@ def create_blacklist_date(days):
 
 
 class Utils(commands.Cog):
-    def __init__(self, bot: Bot):
-        self.bot: Bot = bot
+    def __init__(self, bot: AGB):
+        self.bot: AGB = bot
 
 
 def error_embed(title, description):
@@ -102,10 +102,9 @@ def _parse(translation_file: io.TextIOWrapper) -> Dict[str, str]:
             # New msgid
             if step is IN_MSGSTR and translated:
                 # Store the last translation
-                translations[locale][_unescape(
-                    untranslated)] = _unescape(translated)
+                translations[locale][_unescape(untranslated)] = _unescape(translated)
             step = IN_MSGID
-            untranslated = line[len(MSGID): -1]
+            untranslated = line[len(MSGID) : -1]
         elif line.startswith('"') and line.endswith('"'):
             if step is IN_MSGID:
                 # Line continuing on from msgid
@@ -116,7 +115,7 @@ def _parse(translation_file: io.TextIOWrapper) -> Dict[str, str]:
         elif line.startswith(MSGSTR):
             # New msgstr
             step = IN_MSGSTR
-            translated = line[len(MSGSTR): -1]
+            translated = line[len(MSGSTR) : -1]
 
     if step is IN_MSGSTR and translated:
         # Store the final translation
@@ -183,9 +182,7 @@ class Translator(Callable[[str], str]):
             return
 
         locale_path = get_locale_path(self.cog_folder, "po")
-        with contextlib.suppress(IOError, FileNotFoundError), locale_path.open(
-            encoding="utf-8"
-        ) as file:
+        with contextlib.suppress(IOError, FileNotFoundError), locale_path.open(encoding="utf-8") as file:
             self._parse(file)
 
     def _parse(self, translation_file):

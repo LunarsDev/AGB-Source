@@ -5,6 +5,7 @@ from random import choice
 
 def emoji():
     """Randomize footer emojis."""
+
     EMOJIS = [
         "\N{AUBERGINE}",
         "\N{SMIRKING FACE}",
@@ -96,7 +97,6 @@ BOOBS = [
     "BustyPetite",
     "Nipples",
     "PerfectTits",
-    "PiercedNSFW",
     "Stacked",
     "TheHangingBoobs",
     "TheUnderboob",

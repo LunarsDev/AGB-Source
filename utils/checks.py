@@ -9,15 +9,14 @@ import discord
 from discord import ButtonStyle, File, Interaction
 from discord.ext import commands
 from discord.ui import Button, View, button
-from index import Bot, config
+from index import AGB, config
 
 from utils import default
-from utils.embeds import EmbedMaker as Embed
 from utils.default import log
+from utils.embeds import EmbedMaker as Embed
 
 owners = default.get("config.json").owners
 config = default.get("config.json")
-TOP_GG_TOKEN = config.topgg
 
 
 async def check_permissions(ctx, perms, *, check=all):
@@ -26,9 +25,7 @@ async def check_permissions(ctx, perms, *, check=all):
         return True
 
     resolved = ctx.channel.permissions_for(ctx.author)
-    return check(
-        getattr(resolved, name, None) == value for name, value in perms.items()
-    )
+    return check(getattr(resolved, name, None) == value for name, value in perms.items())
 
 
 def has_permissions(*, check=all, **perms):
@@ -47,9 +44,7 @@ async def check_guild_permissions(ctx, perms, *, check=all):
         return False
 
     resolved = ctx.author.guild_permissions
-    return check(
-        getattr(resolved, name, None) == value for name, value in perms.items()
-    )
+    return check(getattr(resolved, name, None) == value for name, value in perms.items())
 
 
 async def send_embed(ctx, embed):
@@ -65,9 +60,7 @@ async def send_embed(ctx, embed):
         await ctx.send(embed=embed)
     except discord.errors.Forbidden:
         try:
-            await ctx.send(
-                "Hey, seems like I can't send embeds. Please check my permissions :)"
-            )
+            await ctx.send("Hey, seems like I can't send embeds. Please check my permissions :)")
         except discord.errors.Forbidden:
             with contextlib.suppress(discord.errors.Forbidden):
                 await ctx.author.send(
@@ -100,8 +93,7 @@ class NotVoted(commands.CheckFailure):
 
     def __init__(self, message: Optional[str] = None) -> None:
         super().__init__(
-            message
-            or "You need to vote to use this command, vote [here](https://top.gg/bot/723726581864071178/vote)"
+            message or "You need to vote to use this command, vote [here](https://top.gg/bot/723726581864071178/vote)"
         )
 
 
@@ -132,18 +124,16 @@ class Blacklisted(commands.CheckFailure):
 async def check_voter(user_id):
     if user_id in owners:
         return True
-    async with aiohttp.ClientSession() as s:
-        async with s.get(
-            f"https://top.gg/api/bots/723726581864071178/check?userId={user_id}",
-            headers={"Authorization": TOP_GG_TOKEN, "Content-Type": "application/json"},
-        ) as r:
-            vote = await r.json()
-            if vote["voted"] == 1:
-                log(f"{user_id} voted")
-                return True
-            else:
-                log(f"{user_id} not voted")
-                return False
+    async with aiohttp.ClientSession() as s, s.get(
+        f"https://top.gg/api/bots/723726581864071178/check?userId={user_id}",
+        headers={"Authorization": config.topgg, "Content-Type": "application/json"},
+    ) as r:
+        vote = await r.json()
+        if vote["voted"] == 1:
+            log(f"{user_id} voted")
+            return True
+        log(f"{user_id} not voted")
+        return False
 
 
 def disabled():
@@ -208,27 +198,6 @@ def is_in_guilds(*guild_ids):
     return commands.check(predicate)
 
 
-# class InteractiveMenu(discord.ui.View):
-#     def __init__(self, bot, ctx: commands.Context):
-#         super().__init__(timeout=None)
-#         self.bot = bot
-#         self.ctx = ctx
-
-#     @discord.ui.button(emoji="❌", style=discord.ButtonStyle.blurple)
-#     async def close(self, i, b: discord.ui.Button):
-#         await i.message.delete()
-
-#     @discord.ui.button(label="Report to Developers", style=discord.ButtonStyle.blurple)
-#     async def report(self, i, b):
-#         bruh = await self.bot.get_channel(990187200656322601)
-#         await bruh.send(f"{self.ctx.author.mention} has reported a bug!")
-
-#     async def interaction_check(self, interaction):
-#         if interaction.user == self.ctx.author:
-#             return True
-#         await interaction.response.send_message("Not your command", ephemeral=True)
-
-
 class Paginator(discord.ui.View):
     def __init__(self, ctx: commands.Context, embeds: List[discord.Embed]):
         super().__init__(timeout=None)
@@ -288,7 +257,7 @@ class Unit:
 class MusicPaginator(View):
     """Simple embed and file paginator view"""
 
-    def __init__(self, bot: Bot, *items: Unit):
+    def __init__(self, bot: AGB, *items: Unit):
         super().__init__()
         self.bot = bot
         self.items = items
@@ -304,9 +273,7 @@ class MusicPaginator(View):
     async def edit(self, iact: Interaction, *, page: int):
         self.page = page
         unit = self.items[page]
-        await iact.response.edit_message(
-            content=unit.content, embed=unit.embed, attachments=unit.files
-        )
+        await iact.response.edit_message(content=unit.content, embed=unit.embed, attachments=unit.files)
 
     @button()
     async def first(self, iact: Interaction, button: Button[Paginator]):

@@ -5,8 +5,9 @@ import datetime
 import json
 import os
 import pathlib
+import random
 import secrets
-from typing import TYPE_CHECKING, Annotated, List, Optional, Union
+from typing import TYPE_CHECKING, List, Optional
 
 import discord
 import psutil
@@ -25,13 +26,11 @@ def list_items_in_english(l: List[str], oxford_comma: bool = True) -> str:
     So one item returns just the item, passing two items returns "item1 and item2" and
     three returns "item1, item2, and item3" with an optional Oxford comma.
     """
-    return ", ".join(
-        l[:-2] + [((oxford_comma and len(l) != 2) * "," + " and ").join(l[-2:])]
-    )
+    return ", ".join(l[:-2] + [((oxford_comma and len(l) != 2) * "," + " and ").join(l[-2:])])
 
 
 if TYPE_CHECKING:
-    from index import Bot
+    from index import AGB
 
 
 class MemberConverter(commands.MemberConverter):
@@ -40,23 +39,19 @@ class MemberConverter(commands.MemberConverter):
             return await super().convert(ctx, argument)
         except commands.BadArgument as e:
             members = [
-                member
-                for member in ctx.guild.members
-                if member.display_name.lower().startswith(argument.lower())
+                member for member in ctx.guild.members if member.display_name.lower().startswith(argument.lower())
             ]
             if len(members) == 1:
                 return members[0]
-            raise commands.BadArgument(
-                f"{len(members)} members found, please be more specific."
-            ) from e
+            raise commands.BadArgument(f"{len(members)} members found, please be more specific.") from e
 
 
 class Information(commands.Cog, name="info"):
     """Info commands for info related things"""
 
-    def __init__(self, bot: Bot):
+    def __init__(self, bot: AGB):
         """Info commands for info related things"""
-        self.bot: Bot = bot
+        self.bot: AGB = bot
         self.config = imports.get("config.json")
         self.lunar_headers = {f"{config.lunarapi.header}": f"{config.lunarapi.token}"}
         self.process = psutil.Process(os.getpid())
@@ -64,24 +59,27 @@ class Information(commands.Cog, name="info"):
     async def cog_unload(self):
         self.process.stop()
 
-    @staticmethod
-    def parse_weather_data(data):
+    async def get_or_fetch_user(self, user_id: int):
+        user = self.bot.get_user(user_id)
+        if user is None:
+            user = await self.bot.fetch_user(user_id)
+
+        return user
+
+    def parse_weather_data(self, data):
         data = data["main"]
         del data["humidity"]
         del data["pressure"]
         return data
 
-    @staticmethod
-    def weather_message(data, location):
+    def weather_message(self, data, location):
         location = location.title()
         embed = Embed(
             title=f"{location} Weather",
             description=f"Here is the weather data for {location}.",
             color=colors.prim,
         )
-        embed.add_field(
-            name="Temperature", value=f"{str(data['temp'])}° F", inline=False
-        )
+        embed.add_field(name="Temperature", value=f"{str(data['temp'])}° F", inline=False)
         embed.add_field(
             name="Minimum temperature",
             value=f"{str(data['temp_min'])}° F",
@@ -92,14 +90,11 @@ class Information(commands.Cog, name="info"):
             value=f"{str(data['temp_max'])}° F",
             inline=False,
         )
-        embed.add_field(
-            name="Feels like", value=f"{str(data['feels_like'])}° F", inline=False
-        )
+        embed.add_field(name="Feels like", value=f"{str(data['feels_like'])}° F", inline=False)
 
         return embed
 
-    @staticmethod
-    def error_message(location):
+    def error_message(self, location):
         location = location.title()
         return Embed(
             title="Error caught!",
@@ -115,8 +110,7 @@ class Information(commands.Cog, name="info"):
             embed=embed,
         )
 
-    @staticmethod
-    def generate_embed(step: int, results_dict):
+    def generate_embed(self, step: int, results_dict):
         """Generate the embed."""
         measuring = ":mag: Measuring..."
         waiting = ":hourglass: Waiting..."
@@ -153,7 +147,9 @@ class Information(commands.Cog, name="info"):
             await ctx.send("Please send a valid location.")
             return
 
-        URL = f"http://api.openweathermap.org/data/2.5/weather?q={location.lower()}&appid={config.Weather}&units=imperial"
+        URL = (
+            f"http://api.openweathermap.org/data/2.5/weather?q={location.lower()}&appid={config.Weather}&units=imperial"
+        )
         try:
             data = json.loads(requests.get(URL).content)
             data = self.parse_weather_data(data)
@@ -174,8 +170,6 @@ class Information(commands.Cog, name="info"):
         if temp is None:
             await ctx.send("Please send a valid temperature.", ephemeral=True)
             return
-
-        temp = temp
         cel = (temp - 32) * (5 / 9)
         await ctx.send(f"{temp}°F is {round(cel, 2)}°C", ephemeral=ephemeral)
 
@@ -192,7 +186,6 @@ class Information(commands.Cog, name="info"):
         if temp is None:
             await ctx.send("Please send a valid temperature.", ephemeral=True)
             return
-        temp = temp
         fah = temp * (9 / 5) + 32
         await ctx.send(f"{temp}°C is {round(fah, 2)}°F", ephemeral=ephemeral)
 
@@ -206,16 +199,12 @@ class Information(commands.Cog, name="info"):
             style=discord.ButtonStyle.link,
             url=config.Vote,
         )
-        support_btn = Button(
-            label="Support server", style=discord.ButtonStyle.link, url=config.Server
-        )
+        support_btn = Button(label="Support server", style=discord.ButtonStyle.link, url=config.Server)
         view = View()
         view.add_item(vote_btn)
         view.add_item(support_btn)
 
-        embed = Embed(
-            title="Thank you!", color=colors.prim, timestamp=ctx.message.created_at
-        )
+        embed = Embed(title="Thank you!", color=colors.prim, timestamp=ctx.message.created_at)
         embed.set_author(
             name=ctx.bot.user.name,
             icon_url=ctx.bot.user.avatar,
@@ -223,9 +212,7 @@ class Information(commands.Cog, name="info"):
         embed.set_thumbnail(url=ctx.bot.user.avatar)
         embed.add_field(
             name=f"{ctx.bot.user.name} was made with love by: {'' if len(self.config.owners) == 1 else ''}",
-            value=", ".join(
-                [str(await self.bot.fetch_user(x)) for x in self.config.owners]
-            ),
+            value=", ".join([str(await self.get_or_fetch_user(x)) for x in self.config.owners]),
             inline=False,
         )
         embed.set_thumbnail(url=ctx.author.avatar)
@@ -266,9 +253,7 @@ class Information(commands.Cog, name="info"):
             style=discord.ButtonStyle.link,
             url=config.Invite,
         )
-        support_btn = Button(
-            label="Support server", style=discord.ButtonStyle.link, url=config.Server
-        )
+        support_btn = Button(label="Support server", style=discord.ButtonStyle.link, url=config.Server)
         view = View()
         view.add_item(invite_btn)
         view.add_item(support_btn)
@@ -284,9 +269,7 @@ class Information(commands.Cog, name="info"):
         if nbytes not in range(3, 1001):
             return await ctx.send("I only accept any numbers between 3-1000")
         if hasattr(ctx, "guild") and ctx.guild is not None:
-            await ctx.send(
-                f"Alright, lemme send you this randomly generated password {ctx.author.mention}."
-            )
+            await ctx.send(f"Alright, lemme send you this randomly generated password {ctx.author.mention}.")
         await ctx.author.send(
             f"🎁 **Here is your password:**\n{secrets.token_urlsafe(nbytes)}\n\n**You could actually use this password for things too since this was completely randomly generated.**"
         )
@@ -395,14 +378,14 @@ class Information(commands.Cog, name="info"):
         if len(chunked) == len(self.bot.guilds):
             all_chunked = "All servers are cached!"
         else:
-            all_chunked = (
-                f"**{len(chunked)}** / **{len(self.bot.guilds)}** servers are cached"
-            )
+            all_chunked = f"{len(chunked)} / {len(self.bot.guilds)} servers are cached"
         if self.bot.shard_count == 1:
             shards = "1 shard"
         else:
             shards = f"{self.bot.shard_count:,} shards"
         made = discord.utils.format_dt(self.bot.user.created_at, style="R")
+        total_used_cmds = f"{sum(x.used_commands for x in await self.bot.db.fetch_users()):,}"
+        uptime = discord.utils.format_dt(self.bot.launch_time, style="R")
         cpu = psutil.cpu_percent()
         cpu_box = default.draw_box(round(cpu), ":blue_square:", ":black_large_square:")
         ramlol = round(ramUsage) // 10
@@ -413,7 +396,7 @@ class Information(commands.Cog, name="info"):
         {ram_box}
         `CPU Usage: {cpu}%`
         {cpu_box}"""
-        BOT_INFO = f"""{all_chunked}\nLatency: {round(self.bot.latency * 1000, 2)}ms\nShard count: {shards}\nLoaded CMDs: {len(set(self.bot.walk_commands()))}\nMade: {made}\n{await line_count(self)}\nOnline for: {default.uptime(self.bot.launch_time)}"""
+        BOT_INFO = f"""{all_chunked}\nLatency: {round(self.bot.latency * 1000, 2)}ms\nShard count: {shards}\nLoaded CMDs: {len(set(self.bot.walk_commands()))}\nTotal used commands: {total_used_cmds}\nMade: {made}\n{await line_count(self)}\nLaunched {uptime}"""
         # API_INFO = f"""API Uptime: {API_UPTIME}\nCPU Cores: {await lunar_api_cores(self)}\nTotal Images: {await lunar_api_files(self)}"""
         # SYS_INFO = f"""System Uptime: {await lunar_system_uptime(self)}\nCPU Cores: {await lunar_api_cores(self)}"""
 
@@ -422,22 +405,16 @@ class Information(commands.Cog, name="info"):
             description=f"[Add me]({config.Invite}) | [Support]({config.Server}) | [Vote]({config.Vote}) | [Donate]({config.Donate})",
         )
         embed.set_thumbnail(url=self.bot.user.avatar)
-        embed.add_field(
-            name="Performance Overview", value=PERFORMANCE_MODAL, inline=False
-        )
+        embed.add_field(name="Performance Overview", value=PERFORMANCE_MODAL, inline=False)
         embed.add_field(
             name="Guild Information",
             value=GUILD_MODAL,
             inline=False,
         )
 
-        embed.add_field(name="Bot Information", value=BOT_INFO, inline=False)
-        embed.set_image(
-            url="https://media.discordapp.net/attachments/940897271120273428/954507474394808451/group.gif"
-        )
-        embed.set_footer(
-            text=f"Made with ❤️ by the Lunar Development team.\nLibrary used: Discord.py{discord_version}"
-        )
+        embed.add_field(name="AGB Information", value=BOT_INFO, inline=False)
+        embed.set_image(url="https://media.discordapp.net/attachments/940897271120273428/954507474394808451/group.gif")
+        embed.set_footer(text=f"Made with ❤️ by the Lunar Development team.\nLibrary used: Discord.py{discord_version}")
         await fetching.edit(content="Almost done...")
         await fetching.edit(
             content=f"Stats about **{self.bot.user}** | **{self.config.version}**",
@@ -475,12 +452,12 @@ class Information(commands.Cog, name="info"):
         if colorhex is None:
             colorhex = colors.prim
         if thumbnail is None:
-            thumbnail = "https://cdn.discordapp.com/icons/755722576445046806/822bafdc8285f1729af731b4d320c5e5.png?size=1024"
+            thumbnail = (
+                "https://cdn.discordapp.com/icons/755722576445046806/822bafdc8285f1729af731b4d320c5e5.png?size=1024"
+            )
         with contextlib.suppress(Exception):
             await ctx.message.delete()
-        await Embed(
-            title=title, description=desc, color=colorhex, thumbnail=thumbnail
-        ).send(ctx)
+        await Embed(title=title, description=desc, color=colorhex, thumbnail=thumbnail).send(ctx)
 
     @permissions.dynamic_ownerbypass_cooldown(1, 5, commands.BucketType.user)
     @commands.hybrid_command()
@@ -513,9 +490,7 @@ class Information(commands.Cog, name="info"):
 
         embed.add_field(
             name=f"{ctx.bot.user.name} was made with love by: {'' if len(self.config.owners) == 1 else ''}",
-            value=", ".join(
-                [str(await self.bot.fetch_user(x)) for x in self.config.owners]
-            ),
+            value=", ".join([str(await self.bot.fetch_user(x)) for x in self.config.owners]),
             inline=False,
         )
         embed.add_field(
@@ -540,9 +515,7 @@ class Information(commands.Cog, name="info"):
 
         msg = await ctx.send("Fetching...")
 
-        usereco = self.bot.db.get_economy_user(
-            user.id
-        ) or await self.bot.db.fetch_economy_user(user.id)
+        usereco = await self.bot.db.getch("usereco", user.id)
         if not usereco:
             await msg.edit(content=f"~~{msg.content}~~ User has no profile.")
             return
@@ -550,17 +523,19 @@ class Information(commands.Cog, name="info"):
         user_balance = f"${usereco.balance:,}"
         user_bank = f"${usereco.bank:,}"
 
-        cached_badges = self.bot.db._badges
-        fetched_badges = (
-            list(cached_badges.values())
-            if cached_badges
-            else await self.bot.db.fetch_badges()
-        )
+        # TODO: will do later... like when needed....
+        badges = ""
+        # cached_badges = self.bot.db._badges
+        # fetched_badges = (
+        #    list(cached_badges.values())
+        #    if cached_badges
+        #    else await self.bot.db.fetch_badges()
+        # )
 
-        badges_list = [
-            badge for badge in fetched_badges if badge.has_badge(user.id) is True
-        ]
-        badges = " ".join(b.name for b in badges_list)
+        #    badges_list = [
+        #    badge for badge in fetched_badges if badge.has_badge(user.id) is True
+        # ]
+        # badges = " ".join(b.name for b in badges_list)
 
         db_user = self.bot.db.get_user(user.id) or await self.bot.db.fetch_user(user.id)
         if db_user:
@@ -593,14 +568,12 @@ class Information(commands.Cog, name="info"):
         if bio is None:
             return await ctx.send_help(ctx.command)
 
-        db_user = self.bot.db.get_user(ctx.author.id) or await self.bot.db.fetch_user(
-            ctx.author.id
-        )
+        db_user = self.bot.db.get_user(ctx.author.id) or await self.bot.db.fetch_user(ctx.author.id)
         if not db_user:
             await ctx.send("You have no profile..?")
             return
 
-        db_user = await db_user.modify(bio=bio)
+        db_user = await db_user.edit(bio=bio)
         embed = Embed(
             title="User Bio",
             color=colors.prim,
@@ -609,6 +582,42 @@ class Information(commands.Cog, name="info"):
         await ctx.send(
             embed=embed,
         )
+
+    @commands.hybrid_group()
+    @permissions.dynamic_ownerbypass_cooldown(1, 5, commands.BucketType.user)
+    async def opt(self, ctx):
+        """Opt in or out of bots message history fetching"""
+        if ctx.invoked_subcommand is None:
+            await ctx.send_help(str(ctx.command))
+            return
+        with contextlib.suppress(Exception):
+            await ctx.message.delete()
+        if ctx.invoked_subcommand is None:
+            await ctx.send_help(str(ctx.command))
+
+    @opt.command(name="out")
+    @permissions.dynamic_ownerbypass_cooldown(1, 5, commands.BucketType.user)
+    async def _out(self, ctx):
+        """Opt out of the bot's message history fetching"""
+        db_user = self.bot.db.get_user(ctx.author.id) or await self.bot.db.fetch_user(ctx.author.id)
+        if not db_user or not db_user.message_tracking:
+            await ctx.send("You are already opted out of message tracking!")
+            return
+        await db_user.modify(msgtracking=False)
+        await Embed(description="You have opted out of message tracking!", thumbnail=None).send(ctx, ephemeral=True)
+
+    @opt.command(name="in")
+    @permissions.dynamic_ownerbypass_cooldown(1, 5, commands.BucketType.user)
+    async def _in(self, ctx):
+        """Opt in to the bot's message history fetching"""
+        db_user = self.bot.db.get_user(ctx.author.id) or await self.bot.db.fetch_user(ctx.author.id)
+        if not db_user:
+            db_user = await self.bot.db.add_user(ctx.author.id)
+        if db_user.message_tracking:
+            await ctx.send("You are already opted into message tracking!")
+            return
+        await db_user.edit(msgtracking=True)
+        await Embed(description="You have opted into message tracking", thumbnail=None).send(ctx, ephemeral=True)
 
     @commands.hybrid_command()
     @commands.bot_has_permissions(embed_links=True)
@@ -621,11 +630,20 @@ class Information(commands.Cog, name="info"):
         """
         if time is None:
             time = "00:00:00"
-
-        datetime_object = datetime.datetime.strptime(
-            f"{date} {time}", "%m/%d/%Y %H:%M:%S"
+        hint = (
+            "\nRemember you do not have to provide a time, it automatically sets to 12:00:00"
+            if random.randint(1, 10) == 5
+            else ""
         )
-        uts = str(datetime_object.timestamp())[:-2]
+        try:
+            datetime_object = datetime.datetime.strptime(f"{date} {time}", "%m/%d/%Y %H:%M:%S")
+            uts = str(datetime_object.timestamp())[:-2]
+        except ValueError as e:
+            await Embed(
+                title="Try again.",
+                description=f"{date} {time} doesn't match format `month/day/year hour/minute/second`. Example: `/timestamp 10/03/2004 03:50:02`{hint}",
+            ).send(ctx)
+            return
         await Embed(
             title="Here's the timestamp you asked for",
             color=colors.prim,
@@ -641,5 +659,5 @@ class Information(commands.Cog, name="info"):
         ).send(ctx)
 
 
-async def setup(bot: Bot) -> None:
+async def setup(bot: AGB) -> None:
     await bot.add_cog(Information(bot))
