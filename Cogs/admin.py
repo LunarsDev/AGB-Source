@@ -8,40 +8,45 @@ import importlib
 import inspect
 import io
 import os
+import pathlib
 import random
 import re
+import shlex
 import subprocess
 import textwrap
 import time
 import traceback
-import pathlib
 from contextlib import redirect_stdout, suppress
+from io import BytesIO
 from subprocess import check_output
-from typing import TYPE_CHECKING, Literal, Optional
+from typing import TYPE_CHECKING, Any, Literal, Optional
 
 import aiohttp
 import discord
 import httpx
 import speedtest
-from discord.ext import commands
 from discord import app_commands
 from discord.app_commands import Choice
-from index import colors, delay, logger
-from Manager.database import Connection
-from Manager.logger import formatColor
-from Manager.objects import Table
+from discord.ext import commands
+from lunarapi import Client, endpoints
 from sentry_sdk import capture_exception
+
+
+from index import colors, config, delay
+from Manager.database import Connection, Table
+from Manager.logger import formatColor
 from utils import default, imports, permissions
 from utils.default import log
 from utils.embeds import EmbedMaker as Embed
 from utils.errors import BlacklistedUser
+from utils.flags import BlacklistUserArguments
 
 from .Utils import random
 
 OS = discord.Object(id=975810661709922334)
 
 if TYPE_CHECKING:
-    from index import Bot
+    from index import AGB
 
 
 class EvalContext:
@@ -91,6 +96,7 @@ class EvalModal(discord.ui.Modal, title="Evaluate Code"):
 
         async def paginate_send(ctx, text: str):
             """Paginates arbatrary length text & sends."""
+
             last = 0
             pages = []
             for curr in range(0, len(text), 1980):
@@ -141,7 +147,6 @@ class EvalView(discord.ui.View):
         if self.author != interaction.user.id:
             return await interaction.response.send_message("You can't do this!", ephemeral=True)
         await interaction.response.send_modal(self.modal)
-        self.stop()
 
 
 class InteractiveMenu(discord.ui.View):
@@ -181,8 +186,8 @@ class InteractiveMenu(discord.ui.View):
 class Admin(commands.Cog, name="admin", command_attrs={}):
     """Commands that arent for you lol"""
 
-    def __init__(self, bot: Bot) -> None:
-        self.bot: Bot = bot
+    def __init__(self, bot: AGB) -> None:
+        self.bot: AGB = bot
         self.config = imports.get("config.json")
         os.environ.setdefault("JISHAKU_HIDE", "1")
         self._last_result = None
@@ -209,6 +214,14 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
         self.nword_re_comp = re.compile(self.nword_re, re.IGNORECASE | re.UNICODE)
         self.afks = {}
 
+        self.CONTAINERS = {
+            "AGB": "f3624f10a30fad7d2b98914dd47a5035ab66dc9cbae8347b50937a232ae0b8b6",
+            "PgAdmin": "3f4c0f8fcaf6cd557c4a5fe23c0ecd214fa37eeeaee24f16433397a5aa7cca17",
+            "Status Page": "5f2c8d1b1b8e7909bae2024586c67bc0693585d0faf12845beff62fbc7a6ed9e",
+            "Minecraft Server": "62c60c804abff8443d02b471a15e8b9e31236e6fded5b79842ed5269b94b1953",
+            "Website": "7655ad002f43a9f268cd3bc38c8c2b2d49d30ab9fc36b620eecd84918d829a0d",
+        }
+
         self.errors = (
             commands.NoPrivateMessage,
             commands.MissingPermissions,
@@ -225,17 +238,21 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
             commands.BadBoolArgument,
         )
 
+    async def get_or_fetch_user(self, user_id: int):
+        user = await self.get_or_fetch_user(user_id)
+        if user is None:
+            user = await self.bot.fetch_user(user_id)
+
     async def remove_images(self, rmcode: str) -> None:
+        payload = {"password": self.config.lunarapi.adminPass, "rmcode": rmcode}
         async with aiohttp.ClientSession(
-            headers={"Authorization": f"Bearer {self.config.lunarapi.tokenNew}"}
-        ) as session, session.get(
-            f"https://api.lunardev.group/admin/apirm?password={self.config.lunarapi.adminPass}&rmcode={rmcode}"
-        ) as resp:
+            headers={"Authorization": f"Bearer {self.config.lunarapi.token}"}
+        ) as session, session.post("https://api.lunardev.group/admin/apirm", json=payload) as resp:
             if resp.status == 200:
                 return
 
     async def blacklist_check(self, ctx: commands.Context):
-        bl = await self.bot.db.fetch_blacklist(ctx.author.id, cache=True)
+        bl = await self.bot.db.fetch_blacklist(ctx.author.id)
         if bl and bl.is_blacklisted:
             raise BlacklistedUser(
                 obj=bl,
@@ -249,19 +266,17 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
             process = await asyncio.create_subprocess_shell(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             result = await process.communicate()
         except NotImplementedError:
-            process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             result = await self.bot.loop.run_in_executor(None, process.communicate)
         return [output.decode() for output in result]
 
-    @staticmethod
-    def cleanup_code(content):
+    def cleanup_code(self, content):
         """Automatically removes code blocks from the code."""
         if content.startswith("```") and content.endswith("```"):
             return "\n".join(content.split("\n")[1:-1])
         return content.strip("` \n")
 
-    @staticmethod
-    async def try_to_send_msg_in_a_channel(guild, msg):
+    async def try_to_send_msg_in_a_channel(self, guild, msg):
         for channel in guild.channels:
             with suppress(Exception):
                 await channel.send(msg)
@@ -305,7 +320,7 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
             Table.BADGES,
             Table.BLACKLIST,
             # Table.REMINDERS,
-            Table.USER_ECONOMY,
+            Table.USERECO,
             Table.USERS,
         ]
         entries: list[int] = []
@@ -336,19 +351,8 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
     @discord.app_commands.guilds(OS)
     @commands.check(permissions.is_owner)
     async def owner(self, ctx: commands.Context):
-        """
-        Owner-only commands.
-        """
+        """Owner-only commands."""
         await ctx.send("Owner-only commands.", ephemeral=True)
-
-    @commands.hybrid_group(name="blacklist")
-    @discord.app_commands.guilds(OS)
-    @commands.check(permissions.is_owner)
-    async def blacklist(self, ctx: commands.Context):
-        """
-        Blacklist commands
-        """
-        await ctx.send("Blacklist commands.", ephemeral=True)
 
     @commands.hybrid_command()
     @discord.app_commands.guilds(OS)
@@ -388,6 +392,132 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
 
         await msg.reply("Done! ✅")
 
+    # @commands.Cog.listener(name="on_message")
+    # async def AutoBanNWord(self, message):
+    #     if message.guild is None:
+    #         return
+    #     if message.author == self.bot.user:
+    #         return
+    #     if message.author.bot:
+    #         return
+    #     if message.guild.id == 755722576445046806 and self.nword_re_comp.search(message.content.lower()):
+    #         if message.author.id in self.config.owners:
+    #             return await message.channel.send("Racist...", delete_after=5)
+    #         if message.content.lower() == "snigger":
+    #             return await message.channel.send(
+    #                 f"{message.author.mention} be careful what you say, `snigger` is really close to a blacklisted word.",
+    #                 delete_after=5,
+    #             )
+    #         reason = "[AutoBan] Racism / Hard R"
+    #         me = await self.get_or_fetch_user(101118549958877184)
+    #         other = self.bot.get_channel(755722577485365370)
+    #         try:
+    #             await message.author.send(
+    #                 f"You have been banned from {message.guild.name} because you said this: {message.content}"
+    #             )
+    #         except Exception as e:
+    #             capture_exception(e)
+    #         try:
+    #             await message.author.guild.ban(user=message.author, reason=reason)
+    #         except Exception as e:
+    #             await me.send(
+    #                 f"I could not ban {message.author.name} / {message.author.id} for racism, please go look into this."
+    #             )
+    #             capture_exception(e)
+    #             return
+    #         logger.warning(f"{message.author} has been banned from {message.guild.name} for being a racist.")
+    #         try:
+    #             await message.channel.send(
+    #                 f"**{message.author}** has been banned from {message.guild.name} for being a racist."
+    #             )
+    #         except Exception as e:
+    #             capture_exception(e)
+    #         await me.send(
+    #             f"{message.author.name} was just banned in {message.guild.name}\n**Message Content**{message.content}"
+    #         )
+    #         await other.send(f"{message.author.name} was just banned from this server for being racist {me.mention}.")
+
+    # @commands.Cog.listener(name="on_message")
+    # async def AutoBanNWord_ForAous_Server(self, message):
+    #     if message.guild is None:
+    #         return
+    #     if message.author == self.bot.user:
+    #         return
+    #     if message.author.bot:
+    #         return
+    #     aou_guild = self.bot.get_guild(707211170897068032)
+    #     if not aou_guild:
+    #         return
+
+    #     if message.guild.id == aou_guild.id:
+    #         if message.content.lower() == "snigger":
+    #             return
+    #         if self.nword_re_comp.search(message.content.lower()):
+    #             if message.author.id in self.config.owners:
+    #                 return await message.channel.send("Racist...", delete_after=5)
+    #             reason = "[AutoBan] Racism / Hard R"
+    #             aou = await self.get_or_fetch_user(516551416064770059)
+    #             other = self.bot.get_channel(911585809986101278)
+    #             try:
+    #                 await message.author.send(
+    #                     f"You have been banned from {message.guild.name} because you said this: {message.content}"
+    #                 )
+    #             except Exception as e:
+    #                 capture_exception(e)
+    #             try:
+    #                 await message.author.guild.ban(user=message.author, reason=reason)
+    #             except Exception as e:
+    #                 capture_exception(e)
+    #                 await aou.send(
+    #                     f"I could not ban {message.author.name} / {message.author.id} for racism, please go look into this."
+    #                 )
+    #                 return
+    #             logger.warning(
+    #                 f"{message.author} has been banned from {message.guild.name} / {message.guild.id} for being a racist."
+    #             )
+    #             try:
+    #                 await message.channel.send(
+    #                     f"**{message.author}** has been banned from {message.guild.name} for being a racist."
+    #                 )
+    #             except Exception as e:
+    #                 capture_exception(e)
+    #             await aou.send(
+    #                 f"{message.author} was just banned in {message.guild.name}(Your Server)\n**Message Content**{message.content}"
+    #             )
+    #             await other.send(
+    #                 f"{message.author} was just banned from this server for being racist.\nEveryone shame them!!"
+    #             )
+
+    # @commands.Cog.listener(name="on_message")
+    # async def AutoBanNWord_ForMMFac_server(self, message):
+    #     if message.guild is None:
+    #         return
+    #     if message.author == self.bot.user:
+    #         return
+    #     if message.author.bot:
+    #         return
+    #     fac_guild = self.bot.get_guild(974738558210420827)
+    #     if not fac_guild:
+    #         return
+    #     if message.guild.id == fac_guild.id:
+    #         if message.content.lower() == "snigger":
+    #             return
+    #         if self.nword_re_comp.search(message.content.lower()):
+    #             if message.author.id in self.config.owners:
+    #                 return await message.channel.send("Racist...", delete_after=5)
+    #             other = self.bot.get_channel(974738559170936863)
+    #             await message.delete()
+    #             await message.channel.send(
+    #                 f"{message.author.mention} **Racism is not allowed here.**",
+    #                 delete_after=5,
+    #             )
+    #             await other.send(
+    #                 f"{message.author} / {message.author.id} is a racist. Here is what they said:\n{message.content}"
+    #             )
+    #             # time the user out for an hour using date time
+    #             user = message.author
+    #             await user.timeout(datetime.timedelta(hours=1), reason="Racism")
+
     @commands.Cog.listener()
     async def on_guild_join(self, guild: discord.Guild):
         if self.nword_re_comp.search(guild.name.lower()):
@@ -401,27 +531,32 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
                 log(f"{guild.name} / {guild.id} is a racist server.")
                 return await guild.leave()
 
-    @commands.Cog.listener()
-    async def on_member_join(self, member: discord.Member, guild=None):
-        info = self.bot.get_channel(755722577049026562)
-        info2 = self.bot.get_channel(776514195465568257)
-        info3 = self.bot.get_channel(755722908122349599)
+    @commands.Cog.listener(name="on_member_join")
+    async def CustomizedJoinEventForGuilds(self, member: discord.Member, guild=None):
+        return
         guild = member.guild
-        embed = Embed(title="User Joined", colour=discord.Colour.green())
+        channel = ""  # insert db shit here owo
+        embed = Embed()
+        async with aiohttp.ClientSession() as session:
+            client = Client(
+                session=session,
+                token=config.lunarapi.token,
+            )
+            image = await client.request(
+                endpoints.generate_welcome,
+                avatar=member.avatar.url,
+                username=member.name,
+                members=f"{guild.member_count}",
+            )
+            byts = BytesIO(await image.bytes())
+            file = discord.File(byts, f"{member.id}.png")
+            embed.set_image(url=f"attachment://{member.id}.png")
         embed.add_field(
             name=f"Welcome {member}",
-            value=f"Welcome {member.mention} to {guild.name}!\nPlease read <#776514195465568257> to get color roles for yourself and common questions about AGB!",
-        )
-        embed.add_field(
-            name="Account Created",
-            value=member.created_at.strftime("%a, %#d %B %Y, %I:%M %p UTC"),
-            inline=False,
+            # value="", # more db stuff
         )
         embed.set_thumbnail(url=member.avatar)
-        if member.guild.id == 755722576445046806 and member.bot:
-            role = discord.utils.get(guild.roles, name="Bots")
-            await member.add_roles(role)
-            return
+        await channel.send(embed=embed, file=file)
 
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member, guild=None):
@@ -475,7 +610,7 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
         def check(e):
             return True if re.search(self.email_re, email) else "agb-dev.xyz" in email
 
-        embed = Embed(title="API Token Gen", colour=discord.Colour.green())
+        embed = Embed(title="API Token Gen", colour=discord.Colour.green(), thumbnail=None)
 
         async def api_send_email(email, username, token):
             async with aiohttp.ClientSession(headers={"Content-Type": "application/json"}) as s:
@@ -548,11 +683,10 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
         Ex:
             /addstatus Servers: {server_count} | Commands: {command_count}
         """
-
-        row_count = len(self.bot.db._statuses)
+        # row_count = len(self.bot.db._statuses)
         status = status.strip().replace("'", "")
-        new_status = await self.bot.db.add_status(row_count, status)
-        embed = Embed(color=colors.prim)
+        new_status = await self.bot.db.add_status(status)
+        embed = Embed(color=colors.prim, thumbnail=None)
         embed.set_author(name=self.bot.user.name, icon_url=self.bot.user.avatar)
         embed.add_field(
             name="Status",
@@ -596,53 +730,20 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
     @owner.command(name="dbfetch")
     @commands.check(permissions.is_owner)
     async def db_fetch(self, ctx):
-        message = await ctx.send("Fetching all servers and users, and adding them to the DB, please wait!")
+        message = await ctx.send(
+            "⚠️ This command only chunks guilds now. The bot no longer stores db entries other than commands."
+        )
         log("Chunking servers, please be patient..")
+        chunked = 0
         for guild in self.bot.guilds:
             if not guild.chunked:
                 await guild.chunk()
+                chunked += 1
                 await asyncio.sleep(0.5)
 
-            # Server Table Check
-            serverRows = await self.bot.db.fetch_guild(guild.id)
-            if not serverRows:
-                await self.bot.db.add_guild(guild.id)
-                log(
-                    f"{formatColor(ctx.guild.name, 'green')} ({formatColor(str(ctx.guild.id), 'gray')}) added to the database [{formatColor('servers', 'gray')}]"
-                )
+        await message.edit(content=f"Done! Chunked {chunked} guilds.")
 
-        for user in self.bot.users:
-            if user.bot:
-                continue
-
-            # User Table Check
-            userRows = await self.bot.db.fetch_user(user.id)
-            if not userRows:
-                await self.bot.db.add_user(user.id)
-                log(
-                    f"{formatColor(user, 'green')} ({formatColor(str(user.id), 'gray')}) added to the database [{formatColor('users', 'gray')}]"
-                )
-
-            # Economy Table Check ##
-            economyRows = await self.bot.db.fetch_economy_user(user.id)
-            if not economyRows:
-                await self.bot.db.add_economy_user(user.id)
-                log(
-                    f"{formatColor(user, 'green')} ({formatColor(str(user.id), 'gray')}) added to the database [{formatColor('economy', 'gray')}]"
-                )
-
-            # Blacklist Table Check
-            blacklistRows = await self.bot.db.fetch_blacklist(user.id)
-            if not blacklistRows:
-                await self.bot.db.add_blacklist(user.id)
-                log(
-                    f"{formatColor(user, 'green')} ({formatColor(str(user.id), 'gray')}) added to the database [{formatColor('blacklist', 'gray')}]"
-                )
-
-        await message.edit(content="Done!")
-
-    @staticmethod
-    async def get_commit(ctx):
+    async def get_commit(self, ctx):
         COMMAND = "git branch -vv"
         proc = await asyncio.create_subprocess_shell(
             COMMAND, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
@@ -687,7 +788,7 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
             stdout = stdout.decode()
             addendum = "\n\n**Warning: no upstream branch is set.  I automatically pulled from origin/main but this may be wrong.  To remove this message and make it dynamic, please run `git branch --set-upstream-to=origin/<branch> <branch>`**"
 
-        embed = Embed(title="Git pull", description="", color=colors.prim)
+        embed = Embed(title="Git pull", description="", color=colors.prim, thumbnail=None)
         if "Fast-forward" not in stdout:
             if "Already up to date." in stdout:
                 embed.description = "Code is up to date."
@@ -713,7 +814,7 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
     @commands.check(permissions.is_owner)
     async def fix(self, ctx):
         COMMAND = "./git-fix.sh"
-        os.system("chmod +x ./git-fix.sh")
+        os.system(shlex.quote("chmod +x ./git-fix.sh"))
         proc = await asyncio.create_subprocess_shell(
             COMMAND, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
@@ -811,108 +912,136 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
             message_up = f"**{results_dict['upload'] / 1_000_000:.2f}** mbps"
             title = "NetSpeed Results"
             color = discord.Color.green()
-        embed = Embed(title=title, color=color)
+        embed = Embed(title=title, color=color, thumbnail=None)
         embed.add_field(name="Ping", value=message_ping)
         embed.add_field(name="Download", value=message_down)
         embed.add_field(name="Upload", value=message_up)
         return embed
 
-    @blacklist.command(name="temp")
+    @commands.hybrid_group(name="blacklist")
+    @discord.app_commands.guilds(OS)
     @commands.check(permissions.is_owner)
-    async def blacklist_add_temp(
-        self,
-        ctx,
-        user: discord.User,
-        *,
-        days: int,
-        silent: bool = False,
-        reason: str = None,
-    ):
-        db_user = await self.bot.db.fetch_blacklist(user.id)
-        if not db_user or db_user is None:
-            await self.bot.db.add_temp_blacklist(user.id, blacklisted=True, days=days)
-            await Embed(
-                title="Temporary Blacklist",
-                description=f"{user.id} was not in the database!\nThey have been added and blacklisted for {days} days.",
-            ).send(ctx)
-        else:
-            # await self.bot.db.update_temp_blacklist(
-            #     user.id, blacklisted=True, days=days
-            # ) # Exchanged for modify, leaving it for archival and reverting purposes
+    async def blacklist(self, ctx: commands.Context):
+        """Blacklist commands"""
+        await ctx.send_help(ctx.command)
 
-            await db_user.modify(blacklisted=True, blacklistedtill=days, reason=reason)
-            await Embed(
-                title="Temporary Blacklist",
-                description=f"{user.id} has been blacklisted for {days} days.",
-            ).send(ctx)
-        if not silent:
-            try:
-                if reason is not None:
-                    e = Embed(
-                        title="Temporary Blacklist",
-                        description=f"You have been temporarily blacklisted from using the bot for the following reason\n{reason}.\n\nThis blacklist lasts for {days} days unless you can email us a good reason why you should be whitelisted - `contact@lunardev.group`",
-                    )
-                await user.send(embed=e)
-                await Embed(
-                    title="Blacklist DM",
-                    description="The user has been notified of their blacklist.",
-                ).send(ctx)
-            except discord.Forbidden:
-                await Embed(
-                    title="Blacklist DM",
-                    description="I was unable to DM the user, they have still been blacklisted.",
-                ).send(ctx)
-
-    @blacklist.command(name="add", invoke_without_command=True, pass_context=True)
+    @blacklist.command(
+        name="user",
+        description="Blacklist a user from using the bot",
+    )
+    @app_commands.describe(
+        user_id="ID of the user you want to blacklist",
+        user="For if the user is in the server",
+        reason="Reason for blacklisting the user",
+        days="For how many days to blacklist the user",
+        blacklist="Whether or not to blacklisted the user. Defaults to true",
+        silent="Whether or not to send a message to the user",
+    )
     @commands.check(permissions.is_owner)
-    async def blacklist_add(
-        self,
-        ctx,
-        user: Optional[discord.User] = None,
-        *,
-        list=None,
-        reason: str = "No reason",
-    ):
-        if not ctx.interaction:
+    async def blacklist_user(self, ctx, *, options: BlacklistUserArguments):
+        if not options.user and not options.user_id:
             return await ctx.send(
-                "This command is only available in slash commands. Its easier to use that way.",
-                delete_after=3,
-            )
-        db_user = await self.bot.db.fetch_blacklist(user.id)
-
-        if not db_user or db_user is None:
-            await self.bot.db.add_blacklist(user.id, blacklisted=True)
-            await Embed(
-                title="Blacklist",
-                description=f"{user.id} was not in the database!\nThey have been added and blacklisted.",
-            )
-        else:
-            # await self.bot.db.update_temp_blacklist(
-            #     user.id, blacklisted=True, days=days
-            # ) # Exchanged for modify, leaving it for archival and reverting purposes
-
-            await db_user.modify(blacklisted=True, reason=reason)
-            await Embed(
-                title="Permanent Blacklist",
-                description=f"{user.id} has been blacklisted.",
-            ).send(ctx)
-        try:
-            if reason is not None:
-                await user.send(
-                    embed=Embed(
-                        title="Blacklist",
-                        description=f"You have been blacklisted from using the bot for the following reason\n{reason}.\n\n If you believe this is a mistake, please email us - `contact@lunardev.group`",
-                    )
+                (
+                    "You need to provide a user via one of the two arguments... "
+                    "user: {actual user in the server or sharing a server with the bot} OR user_id: {user id of the user you want to blacklist, can be anyone}"
                 )
-            await Embed(
-                title="Blacklist DM",
-                description="The user has been notified of their blacklist.",
-            ).send(ctx)
-        except discord.Forbidden:
-            await Embed(
-                title="Blacklist DM",
-                description="I was unable to DM the user, they have still been blacklisted.",
-            ).send(ctx)
+            )
+
+        user_id = int(options.user_id) if options.user_id else int(options.user.id)  # type: ignore
+
+        to_dm = options.user or await self.bot.fetch_user(user_id)
+
+        db_user = await self.bot.db.fetch_blacklist(user_id, blacklisted=None)
+        if not db_user:
+            if not options.blacklist:
+                return await Embed(
+                    title="Blacklist User",
+                    description=f"{user_id} is not blacklisted",
+                ).send(ctx)
+
+            db_user = await self.bot.db.add_blacklist(user_id)
+
+        kwargs: dict[str, Any] = {"blacklisted": options.blacklist}
+        if options.reason:
+            kwargs["reason"] = options.reason
+        if options.days:
+            kwargs["blacklistedtill"] = options.days
+
+        await db_user.edit(**kwargs)
+
+        temp = " temporarily" if options.blacklist and options.days else ""
+        what = "blacklisted" if options.blacklist else "unblacklisted"
+        title = f"User{temp} {what.title()}"
+
+        description = f"{user_id} was {what} from using the bot"
+        if options.days:
+            description += f" for {options.days} days"
+        if options.reason:
+            description += f" with reason: {options.reason}"
+
+        await Embed(
+            title=title,
+            description=description,
+            color=discord.Color.red() if options.blacklist else discord.Color.green(),
+        ).send(ctx)
+
+        if options.silent:
+            return
+
+        cant_dm = f"Could not DM {user_id} about the blacklist change, they have still been {what}."
+        dm_embed = Embed(
+            title=f"{title} DM",
+        )
+        if not to_dm:
+            dm_embed.description = cant_dm
+            await dm_embed.send(ctx)
+            return
+
+        reason = options.reason or "No reason provided"
+        lasts = f"{options.days} days" if options.days else "forever"
+        dm_description = (
+            f"You have been{temp} {what} from using the bot for the following reason: {reason}\n."
+            f"\n\nThis blacklist lasts for {lasts} unless you can email us a good reason why you should be whitelisted - `contact@lunardev.group`"
+        )
+        emb = Embed(
+            title=f"{temp.strip()} {what.title()} DM",
+            description=dm_description,
+        )
+        try:
+            await emb.send(to_dm)
+        except discord.HTTPException:
+            dm_embed.description = cant_dm
+            await dm_embed.send(ctx)
+        else:
+            dm_embed.description = f"DMed {user_id} about the blacklist change."
+            await dm_embed.send(ctx)
+
+    @blacklist.command(
+        name="server",
+        description="Blacklist a server from using the bot",
+    )
+    @app_commands.describe(
+        server_id="ID of the server you want to blacklist",
+        blacklist="Whether or not to blacklisted the server",
+    )
+    @commands.check(permissions.is_owner)
+    async def blacklist_server(self, ctx, server_id: str, blacklist: bool = True):
+        guild_id = int(server_id)
+        db_guild = await self.bot.db.fetch_guild_blacklist(guild_id, blacklisted=None)
+        if not db_guild:
+            if not blacklist:
+                return await Embed(
+                    title="Blacklist Server",
+                    description=f"{guild_id} is not blacklisted",
+                ).send(ctx)
+
+            db_guild = await self.bot.db.add_guild_blacklist(guild_id)
+
+        await db_guild.edit(blacklisted=blacklist)
+        await Embed(
+            title="Blacklist Server",
+            description=f"{guild_id} was {'blacklisted' if blacklist else 'unblacklisted'} from using the bot.",
+        ).send(ctx)
 
     @owner.command()
     @commands.check(permissions.is_owner)
@@ -929,15 +1058,15 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
             if not user_id.isdigit():
                 await ctx.send(f"{user_id} is not a valid user ID.")
                 continue
-            user = self.bot.get_user(int(user_id)) or await self.bot.fetch_user(int(user_id))
+            user = await self.get_or_fetch_user(int(user_id))
             if not user:
                 await ctx.send(f"{user_id} is not a valid user ID.")
                 continue
-            user_blacklist = self.bot.db._blacklists.get(user.id)
+            user_blacklist = await self.bot.db.getch("blacklist", int(user_id))
             if not user_blacklist:
                 await self.bot.db.add_blacklist(user.id, blacklisted=True)
             elif user_blacklist.is_blacklisted is False:
-                await user_blacklist.modify(blacklisted=True)
+                await user_blacklist.edit(blacklisted=True)
         await ctx.send("Done.")
         await self.add_success_reaction()
         return
@@ -1172,27 +1301,30 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
             )
         else:
             await ctx.send(
-                f"Reloaded the following extensions\n" + "\n".join(f"**{name}.py**" for name in names),
+                "Reloaded the following extensions\n" + "\n".join(f"**{name}.py**" for name in names),
                 delete_after=delay,
             )
 
-    @owner.command()
-    @commands.check(permissions.is_owner)
-    async def apirm(self, ctx, *, rmcodes: str):
-        with contextlib.suppress(Exception):
-            await ctx.message.delete()
-        rmcodes = rmcodes.split(" ")
-        apiUrlReg = "https://api.lunardev.group/"
-        imgId = (elem.replace(apiUrlReg, "") for elem in rmcodes)
-        for rmcode in imgId:
-            await self.remove_images(rmcode)
-        if len(rmcodes) == 1:
-            await ctx.send(f"Removed `{rmcodes[0]}` from the API.", delete_after=delay)
-            return
-        await ctx.send(
-            (f"removed the following\n" + "\n".join(f"**{rmcode}**" for rmcode in rmcodes)),
-            delete_after=delay,
-        )
+    # @owner.command()
+    # @commands.check(permissions.is_owner)
+    # async def apirm(self, ctx, *, rmcodes: str):
+    #     with contextlib.suppress(Exception):
+    #         await ctx.message.delete()
+    #     rmcodes = rmcodes.split(" ")
+    #     apiUrlReg = "https://api.lunardev.group/"
+    #     imgId = (elem.replace(apiUrlReg, "") for elem in rmcodes)
+    #     for rmcode in imgId:
+    #         await self.remove_images(rmcode)
+    #     if len(rmcodes) == 1:
+    #         await ctx.send(f"Removed `{rmcodes[0]}` from the API.", delete_after=delay)
+    #         return
+    #     await ctx.send(
+    #         (
+    #             "removed the following\n"
+    #             + "\n".join(f"**{rmcode}**" for rmcode in rmcodes)
+    #         ),
+    #         delete_after=delay,
+    #     )
 
     @owner.command()
     @commands.check(permissions.is_owner)
@@ -1217,13 +1349,12 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
         # uncomment when used i guess
         await ctx.send("Restarting AGB")
         async with aiohttp.ClientSession(
-            headers={"Authorization": f"Bearer {self.config.lunarapi.tokenNew}"}
-        ) as session:
-            async with session.get(
-                f"https://api.lunardev.group/admin/restart/agb?password={self.config.lunarapi.adminPass}"
-            ) as resp:
-                if resp.status == 200:
-                    return
+            headers={"Authorization": f"Bearer {self.config.lunarapi.token}"}
+        ) as session, session.get(
+            f"https://api.lunardev.group/admin/restart/agb?password={self.config.lunarapi.adminPass}"
+        ) as resp:
+            if resp.status == 200:
+                return
 
     @owner.command()
     @commands.check(permissions.is_owner)
@@ -1307,8 +1438,11 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
             )
         except aiohttp.InvalidURL:
             await ctx.send("The URL is invalid...", delete_after=delay)
-        except discord.InvalidArgument:
-            await ctx.send("This URL does not contain a useable image", delete_after=delay)
+        except ValueError:
+            await ctx.send(
+                "ValueError, this shouldn't happen. Try a different image.",
+                delete_after=delay,
+            )
         except discord.HTTPException as err:
             await ctx.send(err)
         except TypeError:
@@ -1326,5 +1460,5 @@ class Admin(commands.Cog, name="admin", command_attrs={}):
 #         return True
 
 
-async def setup(bot: Bot) -> None:
+async def setup(bot: AGB) -> None:
     await bot.add_cog(Admin(bot))
